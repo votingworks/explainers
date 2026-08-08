@@ -381,7 +381,7 @@
 
 
   <h2><span class="sec-num">06</span>Check your understanding</h2>
-  <p>Six questions — half on the ideas, half on the code the PR actually changes. Pick an answer to see
+  <p>Seven questions — half on the ideas, half on the code the PR actually changes. Pick an answer to see
   the explanation; your first try is what's scored.</p>
   <div class="quiz" id="quiz"></div>
   <div class="quiz-foot">
@@ -921,6 +921,17 @@
     ],
     "a": 1,
     "e": "Shift + OR + mask + a ~17-op software popcount is ~21 ops that score 36 pixels at once; the byte loop spent load-load-compare-branch on <em>every</em> pixel. The measured 4.7\u21920.8&nbsp;ms predates this series' x86-64-v3 commit, which later collapses those 17 ops to one <code>popcnt</code> \u2014 a bonus, not the mechanism."
+  },
+  {
+    "q": "The fill score (<code>source_is_dark &amp;&amp; template_is_white</code>) could be bit-packed the same way \u2014 <code>popcount((window &gt;&gt; dx) &amp; template)</code>, with the same bit sets <code>PackedBubbleWindow</code> already holds. Why does the commit leave it byte-wise?",
+    "o": [
+      "AND can't be expressed with the packed bit sets \u2014 only OR works",
+      "It runs once per bubble, at the winning placement \u2014 about 1/196th of the work the search used to do \u2014 so packing it would save microseconds while adding a second implementation to keep verified",
+      "The fill score needs the actual grayscale pixel values, not just dark/white bits",
+      "The template width mask doesn't work for AND"
+    ],
+    "a": 1,
+    "e": "Match score is computed 196 times per bubble \u2014 it <em>is</em> the search. Fill is computed once, at the winner, by the original byte-wise <code>BubbleRegion::fill_score</code>, which the edge-fallback path needs anyway and which is pinned by its own property test. Amdahl's law: the whole fill pass costs about what one candidate offset used to. (Amusingly, AND wouldn't even need the mask \u2014 template bits beyond the template width are already zero, so ANDing masks for free. Applicable in principle, skipped on purpose.)"
   }
 ];
   var quizEl = document.getElementById('quiz');
