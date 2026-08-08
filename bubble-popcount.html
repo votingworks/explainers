@@ -1,0 +1,809 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Sixty-Four Pixels at a Time — bit-packed bubble scoring</title>
+<style>
+  :root {
+    --bg: #f6f4ee;
+    --ink: #211e19;
+    --muted: #6f695e;
+    --accent: #0f766e;
+    --rule: #ddd8cc;
+    --code-bg: #eeebe1;
+    --code-ink: #2a2721;
+    --panel: #14161a;
+    --panel-edge: #2a2e36;
+    --panel-text: #cfcabe;
+    --panel-muted: #8a8fa0;
+    --hit: #0d9488;
+    --miss: #d97706;
+    --hit-bright: #1fc2af;
+    --miss-bright: #f0a33c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17181c;
+      --ink: #e6e2d8;
+      --muted: #9d978b;
+      --accent: #3db4a6;
+      --rule: #2c2e34;
+      --code-bg: #1d1f24;
+      --code-ink: #d5d1c6;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17181c;
+    --ink: #e6e2d8;
+    --muted: #9d978b;
+    --accent: #3db4a6;
+    --rule: #2c2e34;
+    --code-bg: #1d1f24;
+    --code-ink: #d5d1c6;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Charter', 'Bitstream Charter', 'Iowan Old Style', 'Source Serif 4', Georgia, serif;
+    font-size: 17px;
+    line-height: 1.6;
+    margin: 0;
+    padding: 0 20px 80px;
+  }
+  .mono, code, pre, button, .hud, .eyebrow, .stat-num, .stat-label, .readout, .fig-caption, .sec-num, .race-row, .slider-row, label.slider {
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+  }
+
+  .col { max-width: 68ch; margin: 0 auto; }
+  .wide { max-width: 880px; margin: 0 auto; }
+
+  header { padding: 64px 0 8px; }
+  .eyebrow { font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); margin: 0 0 18px; }
+  h1 {
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+    font-size: clamp(1.7rem, 4.5vw, 2.5rem);
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+  .dek { font-size: 1.12rem; color: var(--muted); margin: 0 0 36px; max-width: 56ch; text-wrap: balance; }
+
+  .stats { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 24px; }
+  .stat { flex: 1 1 180px; border-top: 2px solid var(--accent); background: var(--code-bg); padding: 14px 16px 12px; }
+  .stat-num { font-size: 1.55rem; font-weight: 650; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; display: block; }
+  .stat-label { font-size: 11.5px; color: var(--muted); display: block; margin-top: 4px; line-height: 1.45; }
+
+  h2 { font-size: 1.35rem; margin: 56px 0 12px; letter-spacing: -0.01em; text-wrap: balance; }
+  .sec-num { color: var(--accent); font-size: 0.85em; font-weight: 600; margin-right: 10px; }
+  p { margin: 0 0 16px; }
+  a { color: var(--accent); }
+  strong { font-weight: 650; }
+
+  code { background: var(--code-bg); color: var(--code-ink); font-size: 0.85em; padding: 1px 5px; border-radius: 3px; }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    font-size: 13px;
+    line-height: 1.55;
+    padding: 16px 18px;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 0;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .code-block-label {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 14px 0 6px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .cmt { color: var(--accent); opacity: 0.85; }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-edge);
+    border-radius: 8px;
+    padding: 18px;
+    margin: 24px 0 10px;
+    color: var(--panel-text);
+    overflow-x: auto;
+  }
+  .fig-caption { font-size: 12px; color: var(--muted); line-height: 1.55; margin: 0 0 32px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 16px; }
+  button {
+    background: transparent;
+    color: var(--panel-text);
+    border: 1px solid #4a5060;
+    border-radius: 5px;
+    font-size: 12.5px;
+    padding: 7px 14px;
+    cursor: pointer;
+    letter-spacing: 0.02em;
+  }
+  button:hover:not(:disabled) { border-color: var(--hit-bright); color: #fff; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.primary { border-color: var(--hit); background: rgba(13, 148, 136, 0.14); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--hit-bright); outline-offset: 2px; }
+
+  .hud { font-size: 12px; color: var(--panel-muted); font-variant-numeric: tabular-nums; }
+  .readout { font-size: 12px; color: var(--panel-muted); min-height: 1.5em; margin-top: 10px; font-variant-numeric: tabular-nums; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 14px; font-size: 11.5px; color: var(--panel-muted); font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+  canvas { display: block; }
+  .panel-label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--panel-muted); margin: 0 0 8px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+
+  .search-fig { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+  .slider-row { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; margin: 0 0 14px; font-size: 12.5px; color: var(--panel-text); }
+  label.slider { display: inline-flex; gap: 8px; align-items: center; font-size: 12.5px; }
+  input[type="range"] { accent-color: var(--hit); width: 150px; }
+
+  .race-row { display: flex; align-items: center; gap: 12px; margin: 10px 0; font-size: 12.5px; }
+  .race-name { width: 130px; flex: none; color: var(--panel-text); }
+  .race-track { flex: 1; height: 14px; background: #23262e; border-radius: 3px; overflow: hidden; }
+  .race-fill { height: 100%; width: 0%; }
+  .race-fill.bytes { background: var(--miss); }
+  .race-fill.packed { background: var(--hit); }
+  .race-ms { width: 84px; flex: none; text-align: right; font-variant-numeric: tabular-nums; color: var(--panel-text); }
+  .verdict { margin-top: 12px; font-size: 13px; min-height: 1.6em; font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--panel-muted); }
+  .verdict.win { color: var(--hit-bright); }
+
+  footer {
+    margin-top: 72px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+    font-size: 12.5px;
+    color: var(--muted);
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    line-height: 1.8;
+  }
+</style>
+</head>
+<body>
+<div class="col">
+  <header>
+    <p class="eyebrow">ballot-interpreter · bubble scoring · commit 23b6abe9</p>
+    <h1>Sixty-four pixels at a time</h1>
+    <p class="dek">To read a voter's mark, the interpreter first has to find the printed bubble — by trying
+    196 candidate positions and scoring every one. Packing each row of that comparison into a single 64-bit
+    word turns a thousand byte reads per candidate into a handful of shifts and popcounts, making bubble
+    scoring six times faster with bit-identical results.</p>
+  </header>
+
+  <div class="stats" role="list">
+    <div class="stat" role="listitem">
+      <span class="stat-num">4.7 → 0.8 ms</span>
+      <span class="stat-label">scoring 100 bubbles (Intel N97); roughly 1 ms per sheet of end-to-end interpretation</span>
+    </div>
+    <div class="stat" role="listitem">
+      <span class="stat-num">720 → 20 ops</span>
+      <span class="stat-label">per candidate position, for this page's 36×20 toy bubble: byte compares → row popcounts</span>
+    </div>
+    <div class="stat" role="listitem">
+      <span class="stat-num">3,040,128</span>
+      <span class="stat-label">grid positions re-scored across 2,436 field-scanned pages: zero differences</span>
+    </div>
+  </div>
+
+  <h2><span class="sec-num">01</span>Find the bubble, then read it</h2>
+  <p>Paper stretches, feeds skew, printers drift — so a bubble is never <em>exactly</em> where the ballot
+  layout says it should be. Before judging whether a bubble is filled, the interpreter slides the bubble's
+  printed template over the scan, trying every offset within ±7 pixels (14 × 14 = 196 placements), and
+  keeps the one that matches best.</p>
+  <p>The match score counts pixels satisfying <code>source_is_dark || template_is_white</code>. Since a
+  template pixel is either white background (always matches) or outline ink, the only way a pixel can
+  <em>miss</em> is if the template has outline there and the scan doesn't have ink. Maximizing the score
+  means locking onto the printed oval:</p>
+</div>
+
+<div class="wide">
+  <div class="panel">
+    <div class="controls">
+      <button id="btnPlayA" class="primary">▶ Search</button>
+      <button id="btnResetA">Reset</button>
+      <span class="hud" id="hudA">196 candidate placements · x-major, ties keep the first</span>
+    </div>
+    <div class="search-fig">
+      <div>
+        <p class="panel-label">The scan, with the template at the current offset</p>
+        <canvas id="windowCanvas" role="img" aria-label="A scanned bubble slightly offset from its expected position, with the template outline sliding over candidate placements"></canvas>
+      </div>
+      <div>
+        <p class="panel-label">Match score at each of the 196 offsets</p>
+        <canvas id="heatCanvas" role="img" aria-label="A 14 by 14 heatmap of match scores, one cell per candidate offset, with the best offset ringed"></canvas>
+      </div>
+    </div>
+    <div class="legend">
+      <span><span class="swatch" style="background:var(--hit)"></span>template outline at current offset</span>
+      <span><span class="swatch" style="background:#35e0cb"></span>higher match score</span>
+      <span><span class="swatch" style="border:1.5px solid #f2efe8; background:transparent"></span>best so far</span>
+    </div>
+    <div class="readout" id="readoutA" aria-live="polite">press ▶ Search to sweep the offsets, or hover the heatmap after a sweep</div>
+  </div>
+  <p class="fig-caption">The toy bubble here is a 36×20 template searched at production's real ±7-pixel
+  distance. The scanned oval is printed 2 px right and 3 px up of where the layout expects it, with ink
+  dropouts and a partial voter mark — the search finds it anyway.</p>
+</div>
+
+<div class="col">
+  <h2><span class="sec-num">02</span>A byte per pixel is 64× too wide</h2>
+  <p>The old search evaluated that predicate pixel by pixel: for each of 196 placements, walk all 720
+  template positions, load a byte of scan and a byte of template, compare, branch, count. But the predicate
+  only has two inputs — <em>is the scan dark here</em> and <em>is the template white here</em> — each a
+  single bit. A CPU register holds 64 of those bits and the ALU operates on all of them at once.</p>
+  <p>So pack once, up front: every row of the search window becomes one <code>u64</code> of dark-pixel
+  bits, and every row of the template becomes one <code>u64</code> of white-pixel bits — 53 words in
+  total, built in one pass over the pixels:</p>
+  <pre><code>fn pack_row(row: &amp;[u8], is_set: impl Fn(u8) -&gt; bool) -&gt; u64 {
+    row.iter()
+        .enumerate()
+        .fold(0u64, |bits, (c, &amp;p)| bits | (u64::from(is_set(p)) &lt;&lt; c))
+}
+<span class="cmt">// window rows:   is_set = |p| p &lt;= threshold   (bit = pixel is dark)</span>
+<span class="cmt">// template rows: is_set = |p| p == 255         (bit = pixel is white)</span></code></pre>
+
+  <h2><span class="sec-num">03</span>One row of the comparison, in one instruction's worth of bits</h2>
+  <p>Scoring a placement is now a per-row dance of exactly the original predicate:
+  <strong>shift</strong> the window row right by <code>dx</code> to align it with the template,
+  <strong>OR</strong> in the template's white bits, <strong>mask</strong> to the template width, and
+  <strong>popcount</strong> the ones. Every set bit is a matching pixel; every hole is outline that found
+  no ink. Drag the offset and watch the bits align:</p>
+</div>
+
+<div class="wide">
+  <div class="panel">
+    <div class="slider-row">
+      <label class="slider">dx <input type="range" id="dxSlider" min="0" max="13" value="9" aria-label="Horizontal offset dx"> <span id="dxVal" class="hud">9</span></label>
+      <label class="slider">template row <input type="range" id="rowSlider" min="0" max="19" value="10" aria-label="Template row"> <span id="rowVal" class="hud">10</span></label>
+      <span class="hud">dy pinned to the best vertical offset</span>
+    </div>
+    <div class="search-fig">
+      <div>
+        <p class="panel-label">Which row we're scoring</p>
+        <canvas id="thumbCanvas" role="img" aria-label="The bubble template with the selected row highlighted"></canvas>
+      </div>
+      <div style="flex:1; min-width:520px">
+        <p class="panel-label">The three registers (bit 0 drawn leftmost, matching image columns)</p>
+        <canvas id="regCanvas" role="img" aria-label="Three 64-bit registers: the shifted window row's dark bits, the template row's white bits, and their OR masked to the template width, with mismatch bits highlighted"></canvas>
+      </div>
+    </div>
+    <div class="legend">
+      <span><span class="swatch" style="background:var(--hit)"></span>set bit</span>
+      <span><span class="swatch" style="background:var(--miss)"></span>hole in the result — outline pixel with no ink</span>
+      <span><span class="swatch" style="background:#2b2f38"></span>masked out (beyond the 36-bit template width)</span>
+    </div>
+    <div class="readout" id="readoutB" aria-live="polite"></div>
+  </div>
+  <p class="fig-caption">The real loop is four operations per row — <code>((window &gt;&gt; dx) | template)
+  &amp; mask</code>, then <code>count_ones()</code> — summed over 20 rows per placement. On today's baseline
+  x86-64 build, <code>count_ones()</code> compiles to a ~17-instruction bit dance that still counts all 64
+  bits at once; a later commit in this series raises the build target to x86-64-v3, where it becomes a
+  single <code>popcnt</code>.</p>
+</div>
+
+<div class="col">
+  <pre><code>fn match_count(&amp;self, dx: usize, dy: usize) -&gt; u32 {
+    self.window_rows[dy..dy + self.template_rows.len()]
+        .iter()
+        .zip(&amp;self.template_rows)
+        .map(|(&amp;window, &amp;template)| {
+            (((window &gt;&gt; dx) | template) &amp; self.template_width_mask).count_ones()
+        })
+        .sum()
+}</code></pre>
+
+  <h2><span class="sec-num">04</span>The bill</h2>
+  <p>Per bubble, the byte search did 196 placements × 720 loads-compares-branches ≈ 141,000 byte
+  operations. The packed search pays a one-time 53-row packing pass, then 196 × 20 word operations ≈ 3,900
+  — about 36× less work, which cashes out as a measured 6× (the packing pass, the fill score, and loop
+  overhead keep it honest). Both bars below advance at their measured rates:</p>
+</div>
+
+<div class="wide">
+  <div class="panel">
+    <div class="controls">
+      <button id="btnRunC" class="primary">▶ Run</button>
+      <button id="btnResetC">Reset</button>
+      <span class="hud">scoring 100 bubbles, measured on Intel N97, slowed ~700×</span>
+    </div>
+    <div class="race-row">
+      <span class="race-name">byte per pixel</span>
+      <div class="race-track"><div class="race-fill bytes" id="fillBytes"></div></div>
+      <span class="race-ms" id="msBytes">0.00 ms</span>
+    </div>
+    <div class="race-row">
+      <span class="race-name">bit-packed rows</span>
+      <div class="race-track"><div class="race-fill packed" id="fillPacked"></div></div>
+      <span class="race-ms" id="msPacked">0.00 ms</span>
+    </div>
+    <div class="verdict" id="verdictC" aria-live="polite"></div>
+  </div>
+  <p class="fig-caption">A typical ballot page has a few dozen bubbles per side; end-to-end interpretation
+  gains roughly 1 ms per sheet.</p>
+</div>
+
+<div class="col">
+  <h2><span class="sec-num">05</span>Why bit-identical, not just close</h2>
+  <p>The popcount counts <em>exactly</em> the predicate the byte loop counted — <code>dark || white</code>,
+  one bit per pixel, no approximation anywhere. The packed search also iterates placements in the same
+  x-major order with the same strictly-greater update, so ties break identically; the fill score is still
+  computed by the original byte-wise code, once, at the winning placement; and bubbles whose search window
+  is clipped by the image edge (or too wide for a <code>u64</code>) skip the packed path entirely and use
+  the byte loop as before.</p>
+  <p>The commit pins all of that down twice: a property test asserts the packed and byte searches agree on
+  arbitrary generated inputs, and every interior timing-mark grid cell of the TRR corpus — 3,040,128
+  positions across 2,436 field-scanned pages — was re-scored with zero differences in bounds, match score,
+  or fill score. This page's two figures run both algorithms live and verify they agree on every one of the
+  196 offsets before drawing.</p>
+
+  <footer>
+    commit <strong>23b6abe981</strong> · Score bubble marks with bit-packed rows and popcount<br>
+    libs/ballot-interpreter · <code>src/bubble-ballot-rust/scoring.rs</code> · +251 −43<br>
+    previously: <a href="streak-detection.html">Same reads, different order</a> ·
+    <a href="otsu-sharding.html">Eight histograms are faster than one</a> ·
+    <a href="./">all explainers</a>
+  </footer>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var C = {
+    hit: '#0d9488', miss: '#d97706', hitBright: '#1fc2af', missBright: '#f0a33c',
+    panelMuted: '#8a8fa0', paper: '#eae6dc', inkPx: '#23262e', cellOff: '#23262e',
+    masked: '#2b2f38', white: '#f2efe8', tmplLit: '#6d7683'
+  };
+
+  function setupCanvas(canvas, w, h) {
+    var dpr = window.devicePixelRatio || 1;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    var ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.imageSmoothingEnabled = false;
+    return ctx;
+  }
+
+  function makeRng(seed) {
+    var s = seed >>> 0;
+    return function () {
+      s = (s * 1664525 + 1013904223) >>> 0;
+      return s / 4294967296;
+    };
+  }
+
+  /* ============ toy bubble data (mirrors PackedBubbleWindow) ============ */
+
+  var TW = 36, TH = 20, DIST = 7, OFF = 14;
+  var WW = TW + OFF - 1, WH = TH + OFF - 1; // 49 x 33
+  var THRESH = 128;
+  var TRUE_DX = 9, TRUE_DY = 4; // template origin of the printed oval in the window
+
+  function inRing(tx, ty) {
+    var ex = (tx - 17.5) / 15.5;
+    var ey = (ty - 9.5) / 8.0;
+    var d = Math.sqrt(ex * ex + ey * ey);
+    return Math.abs(d - 0.92) < 0.13;
+  }
+  function inInterior(tx, ty) {
+    var ex = (tx - 17.5) / 15.5;
+    var ey = (ty - 9.5) / 8.0;
+    return ex * ex + ey * ey < 0.55;
+  }
+
+  function makeTemplate() {
+    var t = new Uint8Array(TW * TH);
+    for (var y = 0; y < TH; y++)
+      for (var x = 0; x < TW; x++)
+        t[y * TW + x] = inRing(x, y) ? 40 : 255;
+    return t;
+  }
+
+  function makeWindow() {
+    var rng = makeRng(20260716);
+    var w = new Uint8Array(WW * WH);
+    for (var i = 0; i < w.length; i++) {
+      w[i] = 226 + Math.floor(rng() * 18);
+      if (rng() < 0.008) w[i] = 90 + Math.floor(rng() * 60);
+    }
+    for (var ty = 0; ty < TH; ty++) {
+      for (var tx = 0; tx < TW; tx++) {
+        var wx = TRUE_DX + tx, wy = TRUE_DY + ty;
+        if (inRing(tx, ty)) {
+          if (rng() < 0.86) w[wy * WW + wx] = 25 + Math.floor(rng() * 45);
+        } else if (inInterior(tx, ty)) {
+          // a partial voter mark: two diagonal strokes
+          if (Math.abs((tx - ty) % 7) < 2 && rng() < 0.8) w[wy * WW + wx] = 30 + Math.floor(rng() * 40);
+        }
+      }
+    }
+    return w;
+  }
+
+  function packRows(pixels, width, height, stride, isSet) {
+    var rows = [];
+    for (var y = 0; y < height; y++) {
+      var bits = 0n;
+      for (var x = 0; x < width; x++) {
+        if (isSet(pixels[y * stride + x])) bits |= 1n << BigInt(x);
+      }
+      rows.push(bits);
+    }
+    return rows;
+  }
+
+  function popcnt(b) {
+    var c = 0;
+    while (b) { b &= b - 1n; c++; }
+    return c;
+  }
+
+  var tmpl = makeTemplate();
+  var win = makeWindow();
+  var winRows = packRows(win, WW, WH, WW, function (p) { return p <= THRESH; });
+  var tmplRows = packRows(tmpl, TW, TH, TW, function (p) { return p === 255; });
+  var MASK = (1n << BigInt(TW)) - 1n;
+
+  function packedCount(dx, dy) {
+    var sum = 0;
+    for (var r = 0; r < TH; r++) {
+      sum += popcnt(((winRows[dy + r] >> BigInt(dx)) | tmplRows[r]) & MASK);
+    }
+    return sum;
+  }
+
+  function byteCount(dx, dy) {
+    var n = 0;
+    for (var ty = 0; ty < TH; ty++)
+      for (var tx = 0; tx < TW; tx++)
+        if (win[(dy + ty) * WW + dx + tx] <= THRESH || tmpl[ty * TW + tx] === 255) n++;
+    return n;
+  }
+
+  // x-major, strictly-greater — exactly find_best()'s traversal
+  function findBest(countFn) {
+    var best = null;
+    for (var dx = 0; dx < OFF; dx++)
+      for (var dy = 0; dy < OFF; dy++) {
+        var count = countFn(dx, dy);
+        if (!best || count > best.count) best = { dx: dx, dy: dy, count: count };
+      }
+    return best;
+  }
+
+  // live equivalence check, mirroring the commit's property test
+  var counts = [];
+  var agree = true;
+  for (var vdx = 0; vdx < OFF; vdx++) {
+    for (var vdy = 0; vdy < OFF; vdy++) {
+      var pc = packedCount(vdx, vdy);
+      if (pc !== byteCount(vdx, vdy)) agree = false;
+      counts.push(pc);
+    }
+  }
+  var BEST = findBest(packedCount);
+  if (!agree) console.error('packed and byte searches disagree — toy data bug');
+
+  /* ============ figure A: the search ============ */
+
+  var WSCALE = 8;
+  var winCtx = setupCanvas(document.getElementById('windowCanvas'), WW * WSCALE, WH * WSCALE);
+  var HCELL = 20, HGUT = 26;
+  var heatW = HGUT + OFF * HCELL + 4, heatH = HGUT + OFF * HCELL + 4;
+  var heatCtx = setupCanvas(document.getElementById('heatCanvas'), heatW, heatH);
+
+  var winBase = (function () {
+    var off = document.createElement('canvas');
+    off.width = WW; off.height = WH;
+    var octx = off.getContext('2d');
+    var img = octx.createImageData(WW, WH);
+    for (var i = 0; i < win.length; i++) {
+      var v = win[i];
+      img.data[i * 4] = v; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255;
+    }
+    octx.putImageData(img, 0, 0);
+    return off;
+  })();
+
+  var A = { idx: -1, playing: false, raf: null, lastT: null, hover: null, done: false };
+  var SWEEP_PER_SEC = 32;
+
+  var cMin = Math.min.apply(null, counts), cMax = Math.max.apply(null, counts);
+  function heatColor(count) {
+    var t = (count - cMin) / Math.max(1, cMax - cMin);
+    var lo = [27, 58, 56], hi = [53, 224, 203];
+    var r = Math.round(lo[0] + (hi[0] - lo[0]) * t);
+    var g = Math.round(lo[1] + (hi[1] - lo[1]) * t);
+    var b = Math.round(lo[2] + (hi[2] - lo[2]) * t);
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+
+  function idxToOffset(i) { return { dx: Math.floor(i / OFF), dy: i % OFF }; }
+
+  function drawWindowA(cur) {
+    winCtx.imageSmoothingEnabled = false;
+    winCtx.drawImage(winBase, 0, 0, WW * WSCALE, WH * WSCALE);
+    // expected-position crosshair
+    winCtx.strokeStyle = 'rgba(138,143,160,0.6)';
+    winCtx.lineWidth = 1;
+    winCtx.setLineDash([3, 3]);
+    winCtx.strokeRect(DIST * WSCALE + 0.5, DIST * WSCALE + 0.5, TW * WSCALE - 1, TH * WSCALE - 1);
+    winCtx.setLineDash([]);
+    if (cur) {
+      var color = A.done ? C.hitBright : C.hit;
+      winCtx.fillStyle = color;
+      for (var ty = 0; ty < TH; ty++)
+        for (var tx = 0; tx < TW; tx++)
+          if (tmpl[ty * TW + tx] !== 255)
+            winCtx.fillRect((cur.dx + tx) * WSCALE, (cur.dy + ty) * WSCALE, WSCALE, WSCALE - 1);
+    }
+  }
+
+  function drawHeatA() {
+    heatCtx.clearRect(0, 0, heatW, heatH);
+    heatCtx.font = '10px ui-monospace, Menlo, Consolas, monospace';
+    heatCtx.fillStyle = C.panelMuted;
+    heatCtx.fillText('dx →', HGUT + 2, 10);
+    heatCtx.save();
+    heatCtx.translate(8, HGUT + 24);
+    heatCtx.rotate(-Math.PI / 2);
+    heatCtx.fillText('dy →', 0, 0);
+    heatCtx.restore();
+    var bestSoFar = null;
+    for (var i = 0; i <= A.idx && i < counts.length; i++) {
+      var o = idxToOffset(i);
+      var count = counts[o.dx * OFF + o.dy];
+      if (!bestSoFar || count > bestSoFar.count) bestSoFar = { dx: o.dx, dy: o.dy, count: count };
+      heatCtx.fillStyle = heatColor(count);
+      heatCtx.fillRect(HGUT + o.dx * HCELL, HGUT + o.dy * HCELL, HCELL - 1, HCELL - 1);
+    }
+    // empty cells
+    for (var j = Math.max(0, A.idx + 1); j < counts.length; j++) {
+      var o2 = idxToOffset(j);
+      heatCtx.fillStyle = '#1d2026';
+      heatCtx.fillRect(HGUT + o2.dx * HCELL, HGUT + o2.dy * HCELL, HCELL - 1, HCELL - 1);
+    }
+    if (bestSoFar) {
+      heatCtx.strokeStyle = C.white;
+      heatCtx.lineWidth = 2;
+      heatCtx.strokeRect(HGUT + bestSoFar.dx * HCELL + 0.5, HGUT + bestSoFar.dy * HCELL + 0.5, HCELL - 2, HCELL - 2);
+    }
+    if (A.hover) {
+      heatCtx.strokeStyle = C.missBright;
+      heatCtx.lineWidth = 1.5;
+      heatCtx.strokeRect(HGUT + A.hover.dx * HCELL + 0.5, HGUT + A.hover.dy * HCELL + 0.5, HCELL - 2, HCELL - 2);
+    }
+    return bestSoFar;
+  }
+
+  function drawA() {
+    var cur = null;
+    if (A.idx >= 0 && A.idx < counts.length && !A.done) cur = idxToOffset(A.idx);
+    if (A.done) cur = { dx: BEST.dx, dy: BEST.dy };
+    drawWindowA(cur);
+    var bestSoFar = drawHeatA();
+    if (A.done) {
+      document.getElementById('readoutA').textContent =
+        'best: offset (' + (BEST.dx - DIST) + ', ' + (BEST.dy - DIST) + ') from expected · ' +
+        BEST.count + '/' + (TW * TH) + ' matched (score ' + (BEST.count / (TW * TH)).toFixed(3) + ')' +
+        ' · packed and byte searches agree on all 196 offsets';
+    } else if (A.idx >= 0 && bestSoFar) {
+      var o = idxToOffset(Math.min(A.idx, counts.length - 1));
+      document.getElementById('readoutA').textContent =
+        'trying (' + (o.dx - DIST) + ', ' + (o.dy - DIST) + '): ' + counts[o.dx * OFF + o.dy] + '/' + (TW * TH) +
+        ' · best so far (' + (bestSoFar.dx - DIST) + ', ' + (bestSoFar.dy - DIST) + '): ' + bestSoFar.count;
+    }
+  }
+
+  function tickA(t) {
+    if (A.lastT != null) A.idx = Math.min(counts.length, A.idx + ((t - A.lastT) / 1000) * SWEEP_PER_SEC);
+    A.lastT = t;
+    A.idx = Math.floor(A.idx * 100) / 100;
+    if (A.idx >= counts.length) {
+      A.idx = counts.length - 1;
+      A.done = true;
+      A.playing = false;
+      document.getElementById('btnPlayA').disabled = false;
+    }
+    drawA();
+    if (A.playing) A.raf = requestAnimationFrame(tickA);
+  }
+
+  document.getElementById('btnPlayA').addEventListener('click', function () {
+    if (A.playing) return;
+    A.idx = -1;
+    A.done = false;
+    if (REDUCED) { A.idx = counts.length - 1; A.done = true; drawA(); return; }
+    A.playing = true;
+    A.lastT = null;
+    this.disabled = true;
+    A.raf = requestAnimationFrame(tickA);
+  });
+  document.getElementById('btnResetA').addEventListener('click', function () {
+    if (A.raf) cancelAnimationFrame(A.raf);
+    A.playing = false;
+    A.idx = -1;
+    A.done = false;
+    document.getElementById('btnPlayA').disabled = false;
+    document.getElementById('readoutA').textContent = 'press ▶ Search to sweep the offsets, or hover the heatmap after a sweep';
+    drawA();
+  });
+
+  document.getElementById('heatCanvas').addEventListener('mousemove', function (e) {
+    var r = this.getBoundingClientRect();
+    var dx = Math.floor((e.clientX - r.left - HGUT) / HCELL);
+    var dy = Math.floor((e.clientY - r.top - HGUT) / HCELL);
+    if (dx >= 0 && dx < OFF && dy >= 0 && dy < OFF && (A.done || A.idx >= dx * OFF + dy)) {
+      A.hover = { dx: dx, dy: dy };
+      var count = counts[dx * OFF + dy];
+      document.getElementById('readoutA').textContent =
+        'offset (' + (dx - DIST) + ', ' + (dy - DIST) + ') from expected: ' + count + '/' + (TW * TH) +
+        ' matched (score ' + (count / (TW * TH)).toFixed(3) + ')';
+    } else {
+      A.hover = null;
+    }
+    drawA();
+  });
+  document.getElementById('heatCanvas').addEventListener('mouseleave', function () {
+    A.hover = null;
+    drawA();
+  });
+
+  drawA();
+
+  /* ============ figure B: the registers ============ */
+
+  var CELLW = 11, CELLH = 16, RGUT = 6, REGW = 64 * CELLW + RGUT + 8;
+  var ROWY = [26, 78, 130];
+  var regCtx = setupCanvas(document.getElementById('regCanvas'), REGW, 178);
+  var TSCALE = 5;
+  var thumbCtx = setupCanvas(document.getElementById('thumbCanvas'), TW * TSCALE, TH * TSCALE);
+
+  var Bst = { dx: 9, row: 10 };
+
+  function drawThumb() {
+    for (var y = 0; y < TH; y++)
+      for (var x = 0; x < TW; x++) {
+        thumbCtx.fillStyle = tmpl[y * TW + x] === 255 ? C.paper : C.inkPx;
+        thumbCtx.fillRect(x * TSCALE, y * TSCALE, TSCALE, TSCALE);
+      }
+    thumbCtx.fillStyle = 'rgba(240,163,60,0.4)';
+    thumbCtx.fillRect(0, Bst.row * TSCALE, TW * TSCALE, TSCALE);
+    thumbCtx.strokeStyle = C.missBright;
+    thumbCtx.lineWidth = 1;
+    thumbCtx.strokeRect(0.5, Bst.row * TSCALE + 0.5, TW * TSCALE - 1, TSCALE - 1);
+  }
+
+  function drawRegister(y, bits, opts) {
+    regCtx.font = '11px ui-monospace, Menlo, Consolas, monospace';
+    regCtx.fillStyle = C.panelMuted;
+    regCtx.fillText(opts.label, RGUT, y - 6);
+    for (var c = 0; c < 64; c++) {
+      var x = RGUT + c * CELLW;
+      var masked = c >= TW && opts.maskAware;
+      var set = ((bits >> BigInt(c)) & 1n) === 1n;
+      if (masked) {
+        regCtx.fillStyle = C.masked;
+      } else if (set) {
+        regCtx.fillStyle = opts.litColor;
+      } else if (opts.holeColor && c < TW) {
+        regCtx.fillStyle = opts.holeColor;
+      } else {
+        regCtx.fillStyle = C.cellOff;
+      }
+      regCtx.fillRect(x, y, CELLW - 1, CELLH);
+    }
+    // template-width mask boundary
+    regCtx.strokeStyle = '#565d6b';
+    regCtx.setLineDash([2, 3]);
+    regCtx.beginPath();
+    regCtx.moveTo(RGUT + TW * CELLW - 0.5, y - 2);
+    regCtx.lineTo(RGUT + TW * CELLW - 0.5, y + CELLH + 2);
+    regCtx.stroke();
+    regCtx.setLineDash([]);
+  }
+
+  function drawB() {
+    regCtx.clearRect(0, 0, REGW, 178);
+    var winBits = winRows[BEST.dy + Bst.row] >> BigInt(Bst.dx);
+    var tmplBits = tmplRows[Bst.row];
+    var result = (winBits | tmplBits) & MASK;
+    drawRegister(ROWY[0], winBits & ((1n << 64n) - 1n), { label: 'window row ' + (BEST.dy + Bst.row) + '  ≫ ' + Bst.dx + '   (1 = dark pixel)', litColor: C.hit });
+    drawRegister(ROWY[1], tmplBits, { label: 'template row ' + Bst.row + '   (1 = white pixel)', litColor: C.tmplLit });
+    drawRegister(ROWY[2], result, { label: '(window ≫ dx | template) & mask   (1 = match)', litColor: C.hit, holeColor: C.miss, maskAware: true });
+    var rowMatches = popcnt(result);
+    var total = packedCount(Bst.dx, BEST.dy);
+    document.getElementById('readoutB').textContent =
+      'row ' + Bst.row + ' at dx=' + Bst.dx + ': popcount = ' + rowMatches + '/' + TW +
+      (rowMatches < TW ? ' (' + (TW - rowMatches) + ' outline pixel' + (TW - rowMatches === 1 ? '' : 's') + ' found no ink)' : ' (perfect row)') +
+      ' · all 20 rows at (dx=' + Bst.dx + ', dy=' + BEST.dy + '): ' + total + '/' + (TW * TH) +
+      ' → score ' + (total / (TW * TH)).toFixed(3);
+    drawThumb();
+  }
+
+  document.getElementById('dxSlider').addEventListener('input', function () {
+    Bst.dx = Number(this.value);
+    document.getElementById('dxVal').textContent = this.value;
+    drawB();
+  });
+  document.getElementById('rowSlider').addEventListener('input', function () {
+    Bst.row = Number(this.value);
+    document.getElementById('rowVal').textContent = this.value;
+    drawB();
+  });
+
+  document.getElementById('dxSlider').value = String(BEST.dx);
+  document.getElementById('dxVal').textContent = String(BEST.dx);
+  Bst.dx = BEST.dx;
+  drawB();
+
+  /* ============ figure C: measured race ============ */
+
+  var MEAS = { bytes: 4.7, packed: 0.8 };
+  var SLOWDOWN = 700;
+  var Cst = { animMs: 0, lastT: null, running: false, raf: null };
+
+  function drawC() {
+    var realMs = Cst.animMs / SLOWDOWN;
+    var fB = Math.min(realMs / MEAS.bytes, 1);
+    var fP = Math.min(realMs / MEAS.packed, 1);
+    document.getElementById('fillBytes').style.width = (fB * 100) + '%';
+    document.getElementById('fillPacked').style.width = (fP * 100) + '%';
+    document.getElementById('msBytes').textContent = Math.min(realMs, MEAS.bytes).toFixed(2) + ' ms';
+    document.getElementById('msPacked').textContent = Math.min(realMs, MEAS.packed).toFixed(2) + ' ms';
+    if (fB >= 1 && fP >= 1) {
+      var v = document.getElementById('verdictC');
+      v.textContent = '■ identical scores, bounds, and fills — ' + (MEAS.bytes / MEAS.packed).toFixed(1) + '× sooner';
+      v.className = 'verdict win';
+      Cst.running = false;
+      document.getElementById('btnRunC').disabled = false;
+    }
+  }
+
+  function tickC(t) {
+    if (Cst.lastT != null) Cst.animMs += t - Cst.lastT;
+    Cst.lastT = t;
+    drawC();
+    if (Cst.running) Cst.raf = requestAnimationFrame(tickC);
+  }
+
+  function resetC() {
+    if (Cst.raf) cancelAnimationFrame(Cst.raf);
+    Cst.animMs = 0;
+    Cst.lastT = null;
+    Cst.running = false;
+    document.getElementById('btnRunC').disabled = false;
+    document.getElementById('fillBytes').style.width = '0%';
+    document.getElementById('fillPacked').style.width = '0%';
+    document.getElementById('msBytes').textContent = '0.00 ms';
+    document.getElementById('msPacked').textContent = '0.00 ms';
+    var v = document.getElementById('verdictC');
+    v.textContent = '';
+    v.className = 'verdict';
+  }
+
+  document.getElementById('btnRunC').addEventListener('click', function () {
+    if (Cst.running) return;
+    if (Cst.animMs > 0) resetC();
+    if (REDUCED) { Cst.animMs = MEAS.bytes * SLOWDOWN + 1; drawC(); return; }
+    Cst.running = true;
+    Cst.lastT = null;
+    this.disabled = true;
+    Cst.raf = requestAnimationFrame(tickC);
+  });
+  document.getElementById('btnResetC').addEventListener('click', resetC);
+})();
+</script>
+</body>
+</html>
