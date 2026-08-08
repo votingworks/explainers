@@ -155,6 +155,42 @@
   .verdict { margin-top: 12px; font-size: 13px; min-height: 1.6em; font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--panel-muted); }
   .verdict.win { color: var(--hit-bright); }
 
+
+  /* --- quiz --- */
+  .quiz { display: grid; gap: 18px; margin-top: 24px; }
+  .quiz-q { background: var(--code-bg); border-radius: 8px; padding: 18px 20px; }
+  .quiz-q-text { margin: 0 0 12px; font-weight: 650; }
+  .quiz-opts { display: grid; gap: 8px; }
+  .quiz-opt {
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+    text-align: left;
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 9px 12px;
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    background: var(--bg);
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .quiz-opt:hover:not(:disabled) { border-color: var(--accent); color: var(--ink); background: var(--bg); }
+  .quiz-opt:disabled { cursor: default; opacity: 0.7; }
+  .quiz-opt.correct, .quiz-opt.incorrect { opacity: 1; }
+  .quiz-opt.correct { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); font-weight: 650; }
+  .quiz-opt.incorrect { border-color: var(--miss); box-shadow: inset 3px 0 0 var(--miss); }
+  .quiz-opt.correct::before { content: '\2713\00a0 '; color: var(--accent); }
+  .quiz-opt.incorrect::before { content: '\2717\00a0 '; color: var(--miss); }
+  .quiz-exp { display: none; margin: 12px 0 0; font-size: 0.92rem; color: var(--muted); border-left: 3px solid var(--accent); padding: 2px 0 2px 12px; line-height: 1.55; }
+  .quiz-q.answered .quiz-exp { display: block; }
+  .quiz-foot { display: flex; gap: 14px; align-items: center; margin-top: 14px; }
+  .quiz-score { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .quiz-reset {
+    font-size: 12px; padding: 6px 12px; border: 1px solid var(--rule); border-radius: 5px;
+    background: var(--bg); color: var(--muted); cursor: pointer;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .quiz-reset:hover { border-color: var(--accent); color: var(--ink); }
+
   footer {
     margin-top: 72px;
     padding-top: 18px;
@@ -342,6 +378,16 @@
   positions across 2,436 field-scanned pages — was re-scored with zero differences in bounds, match score,
   or fill score. This page's two figures run both algorithms live and verify they agree on every one of the
   196 offsets before drawing.</p>
+
+
+  <h2><span class="sec-num">06</span>Check your understanding</h2>
+  <p>Six questions — half on the ideas, half on the code the PR actually changes. Pick an answer to see
+  the explanation; your first try is what's scored.</p>
+  <div class="quiz" id="quiz"></div>
+  <div class="quiz-foot">
+    <span class="quiz-score" id="quizScore" aria-live="polite"></span>
+    <button class="quiz-reset" id="quizReset" type="button">reset quiz</button>
+  </div>
 
   <footer>
     commit <strong>23b6abe981</strong> · Score bubble marks with bit-packed rows and popcount<br>
@@ -803,6 +849,131 @@
     Cst.raf = requestAnimationFrame(tickC);
   });
   document.getElementById('btnResetC').addEventListener('click', resetC);
+})();
+</script>
+
+<script>
+(function () {
+  'use strict';
+  var QUESTIONS = [
+  {
+    "q": "In the match predicate <code>source_is_dark || template_is_white</code>, which pixels can <em>fail</em> to match?",
+    "o": [
+      "Any scan pixel with ink outside the oval",
+      "Template outline pixels where the scan has no ink",
+      "Template interior (white) pixels covered by a voter's mark",
+      "Noise pixels anywhere in the search window"
+    ],
+    "a": 1,
+    "e": "A template-white pixel matches no matter what the scan holds, so the only possible miss is outline-with-no-ink. That's why maximizing the match count locks the template onto the printed oval \u2014 and why voter marks and stray ink can't hurt the search."
+  },
+  {
+    "q": "In <code>match_count</code>, what does <code>window &gt;&gt; dx</code> accomplish?",
+    "o": [
+      "Divides the packed pixel values by 2<sup>dx</sup>",
+      "Aligns window column <code>dx</code> with template column 0, so bit <code>c</code> of both words refers to the same pixel",
+      "Skips the first <code>dx</code> rows of the window",
+      "Pre-applies the template width mask"
+    ],
+    "a": 1,
+    "e": "Window rows are packed <em>once</em> for the whole search area, with bit <code>c</code> = window column <code>c</code>. Shifting right by <code>dx</code> re-bases the row so the template's 36 bits line up with the 36 window columns starting at <code>dx</code>. That single shift is what lets one packing serve all 196 placements."
+  },
+  {
+    "q": "Why is the <code>&amp; self.template_width_mask</code> necessary after the OR?",
+    "o": [
+      "To clear the <code>u64</code>'s sign bit before counting",
+      "Without it, dark window pixels to the right of the template's columns would survive the shift and count as extra matches",
+      "To keep the popcount result below 64",
+      "It's purely defensive \u2014 those bits are always zero"
+    ],
+    "a": 1,
+    "e": "The window is 13 pixels wider than the template. After <code>&gt;&gt; dx</code>, the high bits still hold real window pixels beyond the template's right edge, and template bits there are zero \u2014 so any dark pixel out there would survive the OR and inflate the count. The mask (<code>(1 &lt;&lt; template_width) - 1</code>) restricts the count to exactly the pixels the byte loop compared."
+  },
+  {
+    "q": "When does scoring still use the old byte-per-pixel search (<code>find_best_match_bytes</code>)?",
+    "o": [
+      "Never \u2014 the byte path was removed",
+      "Whenever the bubble turns out to be unmarked",
+      "When any candidate placement would fall outside the image, or a window row wouldn't fit in a <code>u64</code>",
+      "Only in debug builds, for verification"
+    ],
+    "a": 2,
+    "e": "<code>PackedBubbleWindow::new</code> returns <code>None</code> for edge-clipped windows \u2014 the byte path <em>skips</em> out-of-bounds candidates rather than shifting them \u2014 and for windows wider than 64 bits. The property test pins the two paths to bit-identical results wherever both apply."
+  },
+  {
+    "q": "<code>find_best</code> iterates <code>dx</code> in the outer loop, <code>dy</code> inner, updating only on strictly-greater counts. Why does that detail matter?",
+    "o": [
+      "x-major order is faster for cache reasons",
+      "Two placements can tie on match count, and \"first in the same traversal order wins\" is what makes the packed search return the same bounds as the byte search",
+      "It avoids integer overflow in the comparison",
+      "It guarantees the expected position is scored first"
+    ],
+    "a": 1,
+    "e": "A correct <em>count</em> isn't enough for bit-identical output: ties on the count must resolve to the same placement, because the returned bounds determine where the fill score is computed. Replicating the byte search's traversal and strictly-greater update makes ties break identically \u2014 confirmed by the corpus sweep's zero differences in bounds, match, and fill."
+  },
+  {
+    "q": "On today's baseline x86-64 build, <code>count_ones()</code> compiles to a ~17-instruction sequence, not a single <code>popcnt</code>. Why is the packed search still ~6\u00d7 faster?",
+    "o": [
+      "The 17 instructions all retire in one cycle",
+      "The win comes from processing an entire row per word \u2014 ~21 ops per 36 pixels instead of several ops per pixel \u2014 not from the popcount instruction itself",
+      "LLVM replaces it with a 256-entry lookup table",
+      "It isn't \u2014 the 6\u00d7 was measured with x86-64-v3 enabled"
+    ],
+    "a": 1,
+    "e": "Shift + OR + mask + a ~17-op software popcount is ~21 ops that score 36 pixels at once; the byte loop spent load-load-compare-branch on <em>every</em> pixel. The measured 4.7\u21920.8&nbsp;ms predates this series' x86-64-v3 commit, which later collapses those 17 ops to one <code>popcnt</code> \u2014 a bonus, not the mechanism."
+  }
+];
+  var quizEl = document.getElementById('quiz');
+  var scoreEl = document.getElementById('quizScore');
+  function render() {
+    quizEl.innerHTML = '';
+    var answered = 0, correct = 0;
+    function updateScore() {
+      scoreEl.textContent = answered + '/' + QUESTIONS.length + ' answered \u00b7 ' + correct + ' correct on first try';
+    }
+    QUESTIONS.forEach(function (q, qi) {
+      var card = document.createElement('div');
+      card.className = 'quiz-q';
+      var text = document.createElement('p');
+      text.className = 'quiz-q-text';
+      text.innerHTML = (qi + 1) + '. ' + q.q;
+      card.appendChild(text);
+      var opts = document.createElement('div');
+      opts.className = 'quiz-opts';
+      var exp = document.createElement('div');
+      exp.className = 'quiz-exp';
+      var buttons = [];
+      q.o.forEach(function (opt, oi) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'quiz-opt';
+        b.innerHTML = opt;
+        b.addEventListener('click', function () {
+          if (card.classList.contains('answered')) return;
+          card.classList.add('answered');
+          buttons.forEach(function (x) { x.disabled = true; });
+          if (oi === q.a) {
+            b.classList.add('correct');
+            correct++;
+          } else {
+            b.classList.add('incorrect');
+            buttons[q.a].classList.add('correct');
+          }
+          answered++;
+          exp.innerHTML = q.e;
+          updateScore();
+        });
+        buttons.push(b);
+        opts.appendChild(b);
+      });
+      card.appendChild(opts);
+      card.appendChild(exp);
+      quizEl.appendChild(card);
+    });
+    updateScore();
+  }
+  document.getElementById('quizReset').addEventListener('click', render);
+  render();
 })();
 </script>
 </body>

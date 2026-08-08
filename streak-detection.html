@@ -230,6 +230,42 @@
   .intro-note { flex: 1 1 220px; font-size: 12.5px; color: var(--panel-muted); font-family: ui-monospace, Menlo, Consolas, monospace; line-height: 1.7; }
   .intro-note b { color: var(--miss-bright); font-weight: 600; }
 
+
+  /* --- quiz --- */
+  .quiz { display: grid; gap: 18px; margin-top: 24px; }
+  .quiz-q { background: var(--code-bg); border-radius: 8px; padding: 18px 20px; }
+  .quiz-q-text { margin: 0 0 12px; font-weight: 650; }
+  .quiz-opts { display: grid; gap: 8px; }
+  .quiz-opt {
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+    text-align: left;
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 9px 12px;
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    background: var(--bg);
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .quiz-opt:hover:not(:disabled) { border-color: var(--accent); color: var(--ink); background: var(--bg); }
+  .quiz-opt:disabled { cursor: default; opacity: 0.7; }
+  .quiz-opt.correct, .quiz-opt.incorrect { opacity: 1; }
+  .quiz-opt.correct { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); font-weight: 650; }
+  .quiz-opt.incorrect { border-color: var(--miss); box-shadow: inset 3px 0 0 var(--miss); }
+  .quiz-opt.correct::before { content: '\2713\00a0 '; color: var(--accent); }
+  .quiz-opt.incorrect::before { content: '\2717\00a0 '; color: var(--miss); }
+  .quiz-exp { display: none; margin: 12px 0 0; font-size: 0.92rem; color: var(--muted); border-left: 3px solid var(--accent); padding: 2px 0 2px 12px; line-height: 1.55; }
+  .quiz-q.answered .quiz-exp { display: block; }
+  .quiz-foot { display: flex; gap: 14px; align-items: center; margin-top: 14px; }
+  .quiz-score { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .quiz-reset {
+    font-size: 12px; padding: 6px 12px; border: 1px solid var(--rule); border-radius: 5px;
+    background: var(--bg); color: var(--muted); cursor: pointer;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .quiz-reset:hover { border-color: var(--accent); color: var(--ink); }
+
   footer {
     margin-top: 72px;
     padding-top: 18px;
@@ -432,6 +468,16 @@ for x in x_range {
   detected streaks before and after — including the three pages with genuine scanner streaks — and the change
   survives the interpreter's full test suite. The result is a 29-line diff that removes the most expensive
   stage of ballot interpretation from the common path entirely: <strong>~2.8&nbsp;ms → ~0.6&nbsp;ms per page.</strong></p>
+
+
+  <h2><span class="sec-num">06</span>Check your understanding</h2>
+  <p>Six questions — half on the ideas, half on the code the PR actually changes. Pick an answer to see
+  the explanation; your first try is what's scored.</p>
+  <div class="quiz" id="quiz"></div>
+  <div class="quiz-foot">
+    <span class="quiz-score" id="quizScore" aria-live="polite"></span>
+    <button class="quiz-reset" id="quizReset" type="button">reset quiz</button>
+  </div>
 
   <footer>
     commit <strong>afec8a1320</strong> · Count streak-candidate columns row-major<br>
@@ -1108,5 +1154,130 @@ for x in x_range {
 })();
 </script>
 
+
+<script>
+(function () {
+  'use strict';
+  var QUESTIONS = [
+  {
+    "q": "Walking one column of a scanned page top to bottom reads ~2,200 pixels. About how many cache lines does that touch, and why?",
+    "o": [
+      "~34 \u2014 a 64-byte line covers 64 vertically adjacent pixels",
+      "~2,200 \u2014 consecutive column pixels are a full row width (~1,700 bytes) apart, so every read lands on a new line",
+      "~64 \u2014 the hardware prefetcher merges strided reads into line-sized batches",
+      "~550 \u2014 each line covers four pixels of a column"
+    ],
+    "a": 1,
+    "e": "Pixels are stored row-major, so moving down one pixel jumps ~1,700 bytes \u2014 far past the 64-byte line the previous read fetched. Every read is a new line: ~2,200 lines (~140&nbsp;KiB) for one column, which also overflows L1 before the next column comes back for them."
+  },
+  {
+    "q": "The new code actually reads slightly <em>more</em> pixels than the old code \u2014 its row-major pass counts even the 20 excluded border columns on each side. Why is it still ~5\u00d7 faster?",
+    "o": [
+      "It skips binarization entirely",
+      "SIMD processes several pixels per instruction",
+      "Cost is dominated by cache-line fetches, not reads: sequential order turns ~3.7M line fetches into ~58k",
+      "Border columns are mostly white and compress well"
+    ],
+    "a": 2,
+    "e": "Same reads, different order. Read sequentially, one 64-byte line serves 64 pixels, so the whole pass fetches ~3.7M&nbsp;/&nbsp;64 \u2248 58k lines instead of one line per read. The extra 40 columns per row are noise next to that."
+  },
+  {
+    "q": "In the new pass \u2014<br><code>for row in raw.chunks_exact(width) { for (count, &amp;p) in column_black_counts.iter_mut().zip(row.iter()) { *count += u32::from(p &lt;= thresh); } }</code><br>\u2014 what does one iteration of the <em>outer</em> loop accomplish?",
+    "o": [
+      "Counts all the black pixels in one column",
+      "Adds one row's contribution to every column's count at once",
+      "Binarizes one row into a bool buffer for later use",
+      "Computes one row's streak score"
+    ],
+    "a": 1,
+    "e": "Each outer iteration walks one row in memory order and bumps all ~1,700 per-column counters by 0 or 1. After the last row, <code>column_black_counts</code> holds exactly the integers the old per-column walks produced."
+  },
+  {
+    "q": "After this change, when does the detector still read a column directly (via <code>fill_column</code>)?",
+    "o": [
+      "Never \u2014 columns are never walked again",
+      "For every adjacent pair of columns, as before",
+      "Only for candidate columns whose count clears the 25% gate \u2014 plus their right neighbor",
+      "Only for the 20 border columns on each side"
+    ],
+    "a": 2,
+    "e": "The detailed two-column analysis is unchanged and still reads the actual columns \u2014 but only for candidates (count \u2265 25% of height). On streak-free pages, the common case, no column is ever walked at all."
+  },
+  {
+    "q": "A column's black-pixel count is 30% of the page height, and the two-column analysis with its right neighbor finds 60% coverage with no large white gap. What does the detector report?",
+    "o": [
+      "A one-column streak, because 30% \u2265 25%",
+      "A two-column streak, because 60% coverage is substantial",
+      "No streak \u2014 the candidate gate passed, but the 75% two-column score did not",
+      "No streak \u2014 30% is below the candidate gate"
+    ],
+    "a": 2,
+    "e": "The 25% <code>MIN_ONE_COLUMN_STREAK_SCORE</code> only nominates candidates; the deciding threshold is the 75% <code>MIN_TWO_COLUMN_STREAK_SCORE</code> (plus the \u226415px white-gap rule). This logic is byte-for-byte identical before and after the change."
+  },
+  {
+    "q": "What makes this optimization provably output-identical, rather than merely corpus-tested?",
+    "o": [
+      "Scores are rounded to the same precision in both versions",
+      "The per-column counts are the same integers either way, so the same candidates pass the gate, and everything downstream is untouched",
+      "The 2,472-scan corpus covers all possible ballots",
+      "Streak detection is idempotent, so differences wash out"
+    ],
+    "a": 1,
+    "e": "Addition commutes: summing a column top-to-bottom or accumulating it row-by-row yields the same integer. Identical counts \u2192 identical candidates \u2192 identical (unchanged) detailed analysis. The corpus run is a belt-and-suspenders check on top of that argument."
+  }
+];
+  var quizEl = document.getElementById('quiz');
+  var scoreEl = document.getElementById('quizScore');
+  function render() {
+    quizEl.innerHTML = '';
+    var answered = 0, correct = 0;
+    function updateScore() {
+      scoreEl.textContent = answered + '/' + QUESTIONS.length + ' answered \u00b7 ' + correct + ' correct on first try';
+    }
+    QUESTIONS.forEach(function (q, qi) {
+      var card = document.createElement('div');
+      card.className = 'quiz-q';
+      var text = document.createElement('p');
+      text.className = 'quiz-q-text';
+      text.innerHTML = (qi + 1) + '. ' + q.q;
+      card.appendChild(text);
+      var opts = document.createElement('div');
+      opts.className = 'quiz-opts';
+      var exp = document.createElement('div');
+      exp.className = 'quiz-exp';
+      var buttons = [];
+      q.o.forEach(function (opt, oi) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'quiz-opt';
+        b.innerHTML = opt;
+        b.addEventListener('click', function () {
+          if (card.classList.contains('answered')) return;
+          card.classList.add('answered');
+          buttons.forEach(function (x) { x.disabled = true; });
+          if (oi === q.a) {
+            b.classList.add('correct');
+            correct++;
+          } else {
+            b.classList.add('incorrect');
+            buttons[q.a].classList.add('correct');
+          }
+          answered++;
+          exp.innerHTML = q.e;
+          updateScore();
+        });
+        buttons.push(b);
+        opts.appendChild(b);
+      });
+      card.appendChild(opts);
+      card.appendChild(exp);
+      quizEl.appendChild(card);
+    });
+    updateScore();
+  }
+  document.getElementById('quizReset').addEventListener('click', render);
+  render();
+})();
+</script>
 </body>
 </html>

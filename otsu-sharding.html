@@ -178,6 +178,42 @@
   .verdict.lose { color: var(--miss-bright); }
   .meas { font-size: 12px; color: var(--panel-muted); margin-top: 14px; line-height: 1.9; font-variant-numeric: tabular-nums; }
 
+
+  /* --- quiz --- */
+  .quiz { display: grid; gap: 18px; margin-top: 24px; }
+  .quiz-q { background: var(--code-bg); border-radius: 8px; padding: 18px 20px; }
+  .quiz-q-text { margin: 0 0 12px; font-weight: 650; }
+  .quiz-opts { display: grid; gap: 8px; }
+  .quiz-opt {
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+    text-align: left;
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 9px 12px;
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    background: var(--bg);
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .quiz-opt:hover:not(:disabled) { border-color: var(--accent); color: var(--ink); background: var(--bg); }
+  .quiz-opt:disabled { cursor: default; opacity: 0.7; }
+  .quiz-opt.correct, .quiz-opt.incorrect { opacity: 1; }
+  .quiz-opt.correct { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); font-weight: 650; }
+  .quiz-opt.incorrect { border-color: var(--miss); box-shadow: inset 3px 0 0 var(--miss); }
+  .quiz-opt.correct::before { content: '\2713\00a0 '; color: var(--accent); }
+  .quiz-opt.incorrect::before { content: '\2717\00a0 '; color: var(--miss); }
+  .quiz-exp { display: none; margin: 12px 0 0; font-size: 0.92rem; color: var(--muted); border-left: 3px solid var(--accent); padding: 2px 0 2px 12px; line-height: 1.55; }
+  .quiz-q.answered .quiz-exp { display: block; }
+  .quiz-foot { display: flex; gap: 14px; align-items: center; margin-top: 14px; }
+  .quiz-score { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .quiz-reset {
+    font-size: 12px; padding: 6px 12px; border: 1px solid var(--rule); border-radius: 5px;
+    background: var(--bg); color: var(--muted); cursor: pointer;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .quiz-reset:hover { border-color: var(--accent); color: var(--ink); }
+
   footer {
     margin-top: 72px;
     padding-top: 18px;
@@ -365,6 +401,16 @@ vpaddd  2056(%rsp), %ymm0, %ymm0
   histogram means an identical threshold — and identical binarized pages, timing marks, and scores
   downstream. The result: page preparation, which runs on every sheet before any interpretation can start,
   takes about half the time it used to.</p>
+
+
+  <h2><span class="sec-num">07</span>Check your understanding</h2>
+  <p>Six questions — half on the ideas, half on the code the PR actually changes. Pick an answer to see
+  the explanation; your first try is what's scored.</p>
+  <div class="quiz" id="quiz"></div>
+  <div class="quiz-foot">
+    <span class="quiz-score" id="quizScore" aria-live="polite"></span>
+    <button class="quiz-reset" id="quizReset" type="button">reset quiz</button>
+  </div>
 
   <footer>
     commit <strong>9a3bed352c</strong> · Shard Otsu histogram accumulation<br>
@@ -717,6 +763,131 @@ vpaddd  2056(%rsp), %ymm0, %ymm0
   document.getElementById('btnRandom').addEventListener('click', function () { resetB('random'); });
 
   resetB('ballot');
+})();
+</script>
+
+<script>
+(function () {
+  'use strict';
+  var QUESTIONS = [
+  {
+    "q": "Why do long runs of identical pixels make the single-histogram loop slow?",
+    "o": [
+      "The branch predictor mispredicts at the start of every run",
+      "Each <code>hist[p] += 1</code> must load what the previous increment to the same bin just stored, so the whole run serializes on the store-to-load round trip",
+      "Identical pixels keep evicting each other from the cache",
+      "The compiler refuses to unroll loops over repetitive data"
+    ],
+    "a": 1,
+    "e": "An increment is load-add-store to <code>hist[p]</code>. When the next pixel is identical, its load depends on the previous store to the same address \u2014 a few cycles each, executed single file. Scanned ballots (blank paper, black borders) are the pathological case."
+  },
+  {
+    "q": "<code>pixels.chunks_exact(8)</code> leaves up to 7 remainder pixels. What does the committed code do with them?",
+    "o": [
+      "Drops them \u2014 7 pixels can't change Otsu's threshold",
+      "Distributes them round-robin across the shards",
+      "Adds them all to <code>shards[0]</code>",
+      "Adds them directly to the merged histogram after the merge"
+    ],
+    "a": 2,
+    "e": "<code>for &amp;p in remainder { shards[0][p as usize] += 1; }</code> \u2014 they all go to shard 0. <em>Which</em> shard gets them is irrelevant to the result, because the shards are summed and addition commutes. Dropping them, though, would change the histogram."
+  },
+  {
+    "q": "On uniformly random pixels, the sharded version measured <em>slower</em> than the naive loop. Why is the naive loop already fast on that data?",
+    "o": [
+      "Random data has better cache locality",
+      "Consecutive increments almost never hit the same bin, so they're already independent \u2014 the out-of-order core overlaps them without any help",
+      "The compiler auto-vectorizes the loop when data is unpredictable",
+      "Random pixels skip the remainder loop"
+    ],
+    "a": 1,
+    "e": "The dependency chain only forms when consecutive pixels share a bin. Random data almost never does, so the naive loop is parallel <em>by accident</em>, and sharding's bookkeeping becomes pure overhead. The optimization exploits a property of scans, not of loops in general."
+  },
+  {
+    "q": "Why can't the compiler vectorize the hot loop (<code>shard[p as usize] += 1</code>) with AVX2?",
+    "o": [
+      "<code>u32</code> counters are too narrow for vector lanes",
+      "The write address depends on the data \u2014 a scatter with possible lane conflicts \u2014 and AVX2 has neither scatter stores nor conflict detection",
+      "Rust's bounds checks block vectorization",
+      "Auto-vectorization is disabled for arrays of arrays"
+    ],
+    "a": 1,
+    "e": "Eight lanes might need to increment the same bin \u2014 a conflict SIMD can't express without scatter plus conflict detection (AVX-512-CD territory, absent on the target hardware). The emitted code confirms it: the hot loop is scalar <code>incl</code> instructions."
+  },
+  {
+    "q": "Which loop in the sharded <code>histogram()</code> did the optimizer actually turn into SIMD (<code>vpaddd</code> on <code>ymm</code> registers)?",
+    "o": [
+      "The 8-wide increment loop over each chunk",
+      "The remainder loop",
+      "The final merge that sums the eight shards bin-by-bin",
+      "None \u2014 the whole function compiles to scalar code"
+    ],
+    "a": 2,
+    "e": "The merge reads fixed, statically-known addresses (256 bins \u00d7 8 shards), so LLVM vectorizes it cleanly \u2014 eight counts per instruction. It's also well under 1% of the runtime: the 2\u00d7 win comes from the scalar hot loop getting eight independent dependency chains."
+  },
+  {
+    "q": "Why is the sharded histogram <em>exactly</em> equal to the naive one \u2014 not approximately?",
+    "o": [
+      "The property test would catch any drift",
+      "Every pixel increments exactly one <code>u32</code> counter, and the shards are summed with commutative, overflow-free integer addition",
+      "Otsu's threshold is robust to small histogram differences",
+      "Both versions truncate the same way"
+    ],
+    "a": 1,
+    "e": "No floats, no rounding: each pixel adds 1 to exactly one counter, and a full page (~3.7M pixels) can't overflow a <code>u32</code> (max ~4.29B). Regrouping commutative additions preserves the sums, so the merged bins \u2014 and the threshold computed from them \u2014 are bit-identical. The property test pins the implementation to that argument."
+  }
+];
+  var quizEl = document.getElementById('quiz');
+  var scoreEl = document.getElementById('quizScore');
+  function render() {
+    quizEl.innerHTML = '';
+    var answered = 0, correct = 0;
+    function updateScore() {
+      scoreEl.textContent = answered + '/' + QUESTIONS.length + ' answered \u00b7 ' + correct + ' correct on first try';
+    }
+    QUESTIONS.forEach(function (q, qi) {
+      var card = document.createElement('div');
+      card.className = 'quiz-q';
+      var text = document.createElement('p');
+      text.className = 'quiz-q-text';
+      text.innerHTML = (qi + 1) + '. ' + q.q;
+      card.appendChild(text);
+      var opts = document.createElement('div');
+      opts.className = 'quiz-opts';
+      var exp = document.createElement('div');
+      exp.className = 'quiz-exp';
+      var buttons = [];
+      q.o.forEach(function (opt, oi) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'quiz-opt';
+        b.innerHTML = opt;
+        b.addEventListener('click', function () {
+          if (card.classList.contains('answered')) return;
+          card.classList.add('answered');
+          buttons.forEach(function (x) { x.disabled = true; });
+          if (oi === q.a) {
+            b.classList.add('correct');
+            correct++;
+          } else {
+            b.classList.add('incorrect');
+            buttons[q.a].classList.add('correct');
+          }
+          answered++;
+          exp.innerHTML = q.e;
+          updateScore();
+        });
+        buttons.push(b);
+        opts.appendChild(b);
+      });
+      card.appendChild(opts);
+      card.appendChild(exp);
+      quizEl.appendChild(card);
+    });
+    updateScore();
+  }
+  document.getElementById('quizReset').addEventListener('click', render);
+  render();
 })();
 </script>
 </body>
