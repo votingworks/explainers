@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>VxSuite Explainers</title>
+<style>
+  :root {
+    --bg: #f6f4ee;
+    --ink: #211e19;
+    --muted: #6f695e;
+    --accent: #0f766e;
+    --rule: #ddd8cc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17181c;
+      --ink: #e6e2d8;
+      --muted: #9d978b;
+      --accent: #3db4a6;
+      --rule: #2c2e34;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17181c;
+    --ink: #e6e2d8;
+    --muted: #9d978b;
+    --accent: #3db4a6;
+    --rule: #2c2e34;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Charter', 'Bitstream Charter', 'Iowan Old Style', Georgia, serif;
+    font-size: 17px;
+    line-height: 1.6;
+    margin: 0;
+    padding: 0 20px 80px;
+  }
+  .col { max-width: 64ch; margin: 0 auto; }
+  .eyebrow, h1, .entry-date {
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+  }
+  .eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 64px 0 14px;
+  }
+  h1 { font-size: 1.9rem; font-weight: 650; letter-spacing: -0.02em; margin: 0 0 10px; }
+  .dek { color: var(--muted); margin: 0 0 44px; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { border-top: 1px solid var(--rule); padding: 20px 0; }
+  li:last-child { border-bottom: 1px solid var(--rule); }
+  a { color: var(--accent); font-weight: 650; text-decoration: none; font-size: 1.1rem; }
+  a:hover, a:focus-visible { text-decoration: underline; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .entry-desc { color: var(--muted); margin: 6px 0 0; font-size: 0.95rem; }
+  .entry-date { color: var(--muted); font-size: 12px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="col">
+  <p class="eyebrow">votingworks · engineering</p>
+  <h1>VxSuite Explainers</h1>
+  <p class="dek">Interactive companions to VxSuite engineering changes.</p>
+  <ul>
+    <li>
+      <a href="streak-detection.html">Same reads, different order</a>
+      <p class="entry-desc">How reordering ~3.7M pixel reads to match memory layout — and skipping the
+      detailed pass unless a column earns it — made ballot streak detection 5× faster with
+      bit-identical results.</p>
+      <p class="entry-date">2026-08 · ballot-interpreter</p>
+    </li>
+  </ul>
+</div>
+</body>
+</html>

@@ -1,0 +1,22 @@
+# VxSuite Explainers
+
+Interactive, self-contained HTML explainers for
+[VxSuite](https://github.com/votingworks/vxsuite) engineering changes, hosted
+via GitHub Pages at https://votingworks.github.io/explainers/.
+
+Each explainer is a single HTML file with no external dependencies — all
+styles, scripts, and graphics are inline, so the pages work offline and will
+render identically for as long as the links live.
+
+## Explainers
+
+| Page | Subject |
+| ---- | ------- |
+| [streak-detection.html](https://votingworks.github.io/explainers/streak-detection.html) | How reordering pixel reads to match memory layout made ballot streak detection 5× faster (`vxsuite` ballot-interpreter) |
+
+## Adding an explainer
+
+1. Add a self-contained `*.html` file at the repo root (no CDN scripts, fonts,
+   or other external requests).
+2. Add it to the list in `index.html` and the table above.
+3. Push to `main`, then update the `gh-pages` branch to match.

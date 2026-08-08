@@ -1,0 +1,1112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Same Reads, Different Order — 5× faster streak detection</title>
+</head>
+<body>
+
+<style>
+  :root {
+    --bg: #f6f4ee;
+    --ink: #211e19;
+    --muted: #6f695e;
+    --accent: #0f766e;
+    --rule: #ddd8cc;
+    --code-bg: #eeebe1;
+    --code-ink: #2a2721;
+    --panel: #14161a;
+    --panel-edge: #2a2e36;
+    --panel-text: #cfcabe;
+    --panel-muted: #8a8fa0;
+    --hit: #0d9488;
+    --miss: #d97706;
+    --hit-bright: #1fc2af;
+    --miss-bright: #f0a33c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17181c;
+      --ink: #e6e2d8;
+      --muted: #9d978b;
+      --accent: #3db4a6;
+      --rule: #2c2e34;
+      --code-bg: #1d1f24;
+      --code-ink: #d5d1c6;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17181c;
+    --ink: #e6e2d8;
+    --muted: #9d978b;
+    --accent: #3db4a6;
+    --rule: #2c2e34;
+    --code-bg: #1d1f24;
+    --code-ink: #d5d1c6;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Charter', 'Bitstream Charter', 'Iowan Old Style', 'Source Serif 4', Georgia, serif;
+    font-size: 17px;
+    line-height: 1.6;
+    margin: 0;
+    padding: 0 20px 80px;
+  }
+  .mono, code, pre, button, .hud, .eyebrow, .stat-num, .stat-label, .readout, .fig-caption, .results-a, .sec-num {
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+  }
+
+  .col { max-width: 68ch; margin: 0 auto; }
+  .wide { max-width: 880px; margin: 0 auto; }
+
+  header { padding: 64px 0 8px; }
+  .eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 18px;
+  }
+  h1 {
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+    font-size: clamp(1.7rem, 4.5vw, 2.5rem);
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+  .dek {
+    font-size: 1.12rem;
+    color: var(--muted);
+    margin: 0 0 36px;
+    max-width: 56ch;
+    text-wrap: balance;
+  }
+
+  .stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 0 0 24px;
+  }
+  .stat {
+    flex: 1 1 180px;
+    border-top: 2px solid var(--accent);
+    background: var(--code-bg);
+    padding: 14px 16px 12px;
+  }
+  .stat-num {
+    font-size: 1.55rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+    display: block;
+  }
+  .stat-label { font-size: 11.5px; color: var(--muted); display: block; margin-top: 4px; line-height: 1.45; }
+
+  h2 {
+    font-size: 1.35rem;
+    margin: 56px 0 12px;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  .sec-num { color: var(--accent); font-size: 0.85em; font-weight: 600; margin-right: 10px; }
+  p { margin: 0 0 16px; }
+  a { color: var(--accent); }
+  strong { font-weight: 650; }
+
+  code {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    font-size: 0.85em;
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    font-size: 13px;
+    line-height: 1.55;
+    padding: 16px 18px;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 0;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .code-pair { display: grid; gap: 14px; margin: 20px 0 8px; }
+  .code-block-label {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 6px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .cmt { color: var(--accent); opacity: 0.85; }
+
+  /* ——— figure panels: committed dark "scanner glass" world in both themes ——— */
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-edge);
+    border-radius: 8px;
+    padding: 18px;
+    margin: 24px 0 10px;
+    color: var(--panel-text);
+    overflow-x: auto;
+  }
+  .fig-caption {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.55;
+    margin: 0 0 32px;
+  }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 16px; }
+  button {
+    background: transparent;
+    color: var(--panel-text);
+    border: 1px solid #4a5060;
+    border-radius: 5px;
+    font-size: 12.5px;
+    padding: 7px 14px;
+    cursor: pointer;
+    letter-spacing: 0.02em;
+  }
+  button:hover:not(:disabled) { border-color: var(--hit-bright); color: #fff; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.primary { border-color: var(--hit); background: rgba(13, 148, 136, 0.14); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--hit-bright); outline-offset: 2px; }
+  .toggle { display: inline-flex; gap: 7px; align-items: center; font-size: 12.5px; color: var(--panel-text); cursor: pointer; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .toggle input { accent-color: var(--miss); width: 15px; height: 15px; cursor: pointer; }
+
+  .hud { font-size: 12px; color: var(--panel-muted); font-variant-numeric: tabular-nums; }
+  .readout {
+    font-size: 12px;
+    color: var(--panel-muted);
+    min-height: 1.5em;
+    margin-top: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 14px; font-size: 11.5px; color: var(--panel-muted); font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+
+  canvas { display: block; }
+  .strip-wrap { margin-top: 18px; }
+  .panel-label {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--panel-muted);
+    margin: 0 0 8px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+
+  .results-a { margin-top: 16px; font-size: 12.5px; line-height: 1.9; font-variant-numeric: tabular-nums; }
+  .results-a .filled { color: var(--panel-text); }
+  .results-a .hitc { color: var(--hit-bright); }
+  .results-a .missc { color: var(--miss-bright); }
+
+  .race { display: flex; flex-wrap: wrap; gap: 20px; }
+  .race-panel { flex: 1 1 360px; min-width: 320px; }
+  .race-head { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 8px; }
+  .race-clock { font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--panel-text); font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .race-status { margin-top: 8px; }
+  .race-verdict { margin-top: 6px; font-size: 12px; min-height: 1.5em; font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--panel-muted); }
+  .race-verdict.done { color: var(--hit-bright); }
+  .banner {
+    margin-top: 18px;
+    font-size: 13px;
+    color: var(--hit-bright);
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    min-height: 1.6em;
+  }
+
+  .intro-fig { display: flex; flex-wrap: wrap; gap: 20px; align-items: center; }
+  .intro-note { flex: 1 1 220px; font-size: 12.5px; color: var(--panel-muted); font-family: ui-monospace, Menlo, Consolas, monospace; line-height: 1.7; }
+  .intro-note b { color: var(--miss-bright); font-weight: 600; }
+
+  footer {
+    margin-top: 72px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+    font-size: 12.5px;
+    color: var(--muted);
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    line-height: 1.8;
+  }
+</style>
+
+<div class="col">
+  <header>
+    <p class="eyebrow">ballot-interpreter · vertical streak detection · commit afec8a13</p>
+    <h1>Same reads, different order</h1>
+    <p class="dek">Streak detection reads every pixel of a ballot scan either way. Reordering those reads to
+    match how the image sits in memory — and skipping the detailed pass unless a column earns it — made the
+    slowest stage of interpretation about five times faster, with bit-identical results.</p>
+  </header>
+
+  <div class="stats" role="list">
+    <div class="stat" role="listitem">
+      <span class="stat-num">2.8 → 0.6 ms</span>
+      <span class="stat-label">per page, measured on production-class hardware (Intel N97)</span>
+    </div>
+    <div class="stat" role="listitem">
+      <span class="stat-num">≈3.7 M reads</span>
+      <span class="stat-label">per page either way — the count didn't change, the order did</span>
+    </div>
+    <div class="stat" role="listitem">
+      <span class="stat-num">2,472 scans</span>
+      <span class="stat-label">re-interpreted: identical streaks, including 3 pages with real ones</span>
+    </div>
+  </div>
+
+  <h2><span class="sec-num">01</span>Why we look for streaks</h2>
+  <p>A speck of debris on a scanner's glass drags a dark vertical line down every page that passes over it.
+  On a ballot, that line can cut through bubbles and read as phantom marks, so the interpreter checks every
+  scanned page for them and rejects affected sheets. The rule of thumb: a streak is a column of pixels that
+  is dark almost top-to-bottom, with no white gap large enough to suggest it's a printed feature.</p>
+</div>
+
+<div class="wide">
+  <div class="panel">
+    <div class="intro-fig">
+      <div>
+        <p class="panel-label">A scanned page on the glass</p>
+        <canvas id="introCanvas" role="img" aria-label="A small synthetic ballot page with timing marks, text, bubbles, and a thin dark vertical streak running down one column"></canvas>
+      </div>
+      <div class="intro-note">
+        <p>A toy ballot page: timing marks around the border, contest text, bubbles — and a
+        <b>two-pixel-wide streak</b> from debris on the glass, running down one column with only tiny gaps.</p>
+        <p>The detector's gate is simple: count the black pixels in every column. Any column that is
+        ≥ 25% black is a <i>candidate</i> worth a closer look. On almost every real page, no column qualifies.</p>
+      </div>
+    </div>
+  </div>
+  <p class="fig-caption">The real detector also ignores 20 border columns on each side (where the timing marks
+  live) and applies a stricter 75% two-column score before calling anything a streak.</p>
+</div>
+
+<div class="col">
+  <h2><span class="sec-num">02</span>An image is one long row</h2>
+  <p>A grayscale scan isn't stored as a grid — it's a single flat array of bytes, one row after another.
+  Pixel <code>(x, y)</code> lives at <code>raw[y * width + x]</code>. The CPU never fetches one byte at a
+  time; it pulls memory in 64-byte <strong>cache lines</strong>. Read a byte and its 63 neighbors arrive for free.</p>
+  <p>That makes traversal order the whole game. Walking a <em>row</em> touches consecutive bytes: one line fetch
+  serves 64 pixels. Walking a <em>column</em> jumps a full row's width between reads — on a real scan that stride
+  is ~1,700 bytes, so <em>every single read</em> lands on a different cache line.</p>
+</div>
+
+<div class="wide">
+  <div class="panel">
+    <div class="controls">
+      <button id="btnCol" class="primary">Read one column</button>
+      <button id="btnRow" class="primary">Read one row</button>
+      <button id="btnResetA">Reset</button>
+    </div>
+    <p class="panel-label">The image (24 × 10 pixels)</p>
+    <canvas id="gridCanvas" role="img" aria-label="A 24 by 10 pixel grid; hovering highlights where each pixel lives in the flat byte array below"></canvas>
+    <div class="strip-wrap">
+      <p class="panel-label">The same 240 bytes, as they actually sit in memory (ticks every 8-byte cache line)</p>
+      <canvas id="stripCanvas" role="img" aria-label="The flat byte array for the grid, grouped into 8-byte cache lines, with reads and cache-line fetches highlighted"></canvas>
+    </div>
+    <div class="legend">
+      <span><span class="swatch" style="background:var(--miss)"></span>read that fetched a new cache line</span>
+      <span><span class="swatch" style="background:var(--hit)"></span>read served by an already-fetched line</span>
+    </div>
+    <div class="results-a" aria-live="polite">
+      <div id="resCol">column order — <span class="filled">not run yet</span></div>
+      <div id="resRow">row order&nbsp;&nbsp;&nbsp; — <span class="filled">not run yet</span></div>
+    </div>
+    <div class="readout" id="readoutA" aria-live="polite">hover the grid to see where a pixel lives in memory</div>
+  </div>
+  <p class="fig-caption">Toy scale: 24-byte rows, 8-byte cache lines. Real scale: ~1,700-byte rows, 64-byte lines —
+  so a column walk fetches a new line on <em>every</em> read, and one column's 2,200 lines (~140&nbsp;KB) overflow
+  L1 cache before the next column comes back for them.</p>
+</div>
+
+<div class="col">
+  <h2><span class="sec-num">03</span>The change: count first, look later</h2>
+  <p>The old detector walked the page column by column — the worst possible order — binarizing each full column
+  just to count its black pixels: about 3.7&nbsp;million strided reads per page. That made streak detection the
+  single most expensive stage of interpretation, paid on every sheet, streak or not.</p>
+  <p>The fix keeps the arithmetic and flips the loop. One row-major pass accumulates all
+  ~1,700 per-column counts simultaneously — like keeping a running tally per column while reading the page
+  the way memory wants to be read. Only columns whose count clears the 25% gate — <em>usually none</em> — get
+  the detailed two-column analysis, which is completely unchanged:</p>
+
+  <div class="code-pair">
+    <div>
+      <p class="code-block-label">before — one strided walk per column</p>
+      <pre><code><span class="cmt">// for every column: walk the whole column (stride = width,</span>
+<span class="cmt">// a new cache line on every read)</span>
+for x in x_range {
+    fill_column(&amp;mut next_col, x + 1);   <span class="cmt">// `height` strided reads</span>
+    let black = next_col.iter().filter(|&amp;&amp;b| b).count();
+    if score(black) &gt;= MIN_ONE_COLUMN_STREAK_SCORE {
+        <span class="cmt">// detailed two-column analysis …</span>
+    }
+    mem::swap(&amp;mut cur_col, &amp;mut next_col);
+}</code></pre>
+    </div>
+    <div>
+      <p class="code-block-label">after — one row-major pass, then only the candidates</p>
+      <pre><code><span class="cmt">// count black pixels in every column at once, in memory order</span>
+let mut counts = vec![0u32; width];
+for row in raw.chunks_exact(width) {
+    for (count, &amp;p) in counts.iter_mut().zip(row) {
+        *count += u32::from(p &lt;= thresh);
+    }
+}
+for x in x_range {
+    if score(counts[x]) &gt;= MIN_ONE_COLUMN_STREAK_SCORE {
+        fill_column(&amp;mut cur_col, x);      <span class="cmt">// rare: candidates only</span>
+        fill_column(&amp;mut next_col, x + 1);
+        <span class="cmt">// detailed two-column analysis (unchanged) …</span>
+    }
+}</code></pre>
+    </div>
+  </div>
+  <p class="fig-caption" style="margin-top:8px">Simplified from <code>image_utils.rs</code> — the real diff is
+  +18/−11 lines in <code>detect_vertical_streaks</code>.</p>
+
+  <h2><span class="sec-num">04</span>The race</h2>
+  <p>Both detectors below run on the same toy page, and both panels advance at their <em>measured</em>
+  real-world rates (2.8&nbsp;ms vs 0.6&nbsp;ms per page), slowed down about 2,500× so you can watch. The bars
+  under each page are the per-column black counts — the same integers, arriving in a different order.</p>
+</div>
+
+<div class="wide">
+  <div class="panel">
+    <div class="controls">
+      <button id="btnRace" class="primary">▶ Race</button>
+      <button id="btnResetB">Reset</button>
+      <label class="toggle"><input type="checkbox" id="chkStreak" checked> debris on the glass</label>
+    </div>
+    <div class="race">
+      <div class="race-panel">
+        <div class="race-head">
+          <span class="panel-label" style="margin:0; color:var(--miss-bright)">before · column-major</span>
+          <span class="race-clock" id="clockOld">0.00 ms</span>
+        </div>
+        <canvas id="ballotOld" role="img" aria-label="The old detector sweeping the toy ballot column by column"></canvas>
+        <canvas id="barsOld" role="img" aria-label="Per-column black pixel counts revealed column by column"></canvas>
+        <div class="hud race-status" id="statusOld">idle</div>
+        <div class="race-verdict" id="verdictOld"></div>
+      </div>
+      <div class="race-panel">
+        <div class="race-head">
+          <span class="panel-label" style="margin:0; color:var(--hit-bright)">after · row-major</span>
+          <span class="race-clock" id="clockNew">0.00 ms</span>
+        </div>
+        <canvas id="ballotNew" role="img" aria-label="The new detector sweeping the toy ballot row by row"></canvas>
+        <canvas id="barsNew" role="img" aria-label="Per-column black pixel counts all growing together as rows are read"></canvas>
+        <div class="hud race-status" id="statusNew">idle</div>
+        <div class="race-verdict" id="verdictNew"></div>
+      </div>
+    </div>
+    <div class="legend">
+      <span><span class="swatch" style="background:var(--miss)"></span>strided reads (cache miss per pixel)</span>
+      <span><span class="swatch" style="background:var(--hit)"></span>sequential reads (memory order)</span>
+      <span><span class="swatch" style="background:#6d7683"></span>per-column black count</span>
+      <span>┄ 25% candidate gate</span>
+    </div>
+    <div class="banner" id="banner" aria-live="polite"></div>
+    <div class="readout" id="readoutB" aria-live="polite">hover the bars to inspect a column</div>
+  </div>
+  <p class="fig-caption">With the streak toggled off — the common case for real ballots — the new pass finds zero
+  candidates and the detailed column analysis never runs at all. The old code paid the full strided walk either way.</p>
+</div>
+
+<div class="col">
+  <h2><span class="sec-num">05</span>Why the output can't change</h2>
+  <p>This is a pure reordering. Addition commutes, so the row-major tally produces the <em>same integers</em>
+  the column walk produced — not approximately, exactly. Same counts means the same columns clear the 25% gate,
+  and the detailed two-column analysis that actually declares a streak wasn't touched: it still reads the
+  candidate columns directly and applies the same 75% score and white-gap rules.</p>
+  <p>The commit backs that argument with data: all 2,472 real scans in the validation corpus produce identical
+  detected streaks before and after — including the three pages with genuine scanner streaks — and the change
+  survives the interpreter's full test suite. The result is a 29-line diff that removes the most expensive
+  stage of ballot interpretation from the common path entirely: <strong>~2.8&nbsp;ms → ~0.6&nbsp;ms per page.</strong></p>
+
+  <footer>
+    commit <strong>afec8a1320</strong> · Count streak-candidate columns row-major<br>
+    libs/ballot-interpreter · <code>src/bubble-ballot-rust/image_utils.rs</code> · +18 −11<br>
+    timings measured on Intel N97 · part of the ballot-interpreter-reduce-allocations series
+  </footer>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var C = {
+    paper: '#eae6dc',
+    inkPx: '#23262e',
+    hit: '#0d9488',
+    miss: '#d97706',
+    hitBright: '#1fc2af',
+    missBright: '#f0a33c',
+    bar: '#6d7683',
+    panelMuted: '#8a8fa0',
+    white: '#f2efe8'
+  };
+
+  function makeRng(seed) {
+    var s = seed >>> 0;
+    return function () {
+      s = (s * 1664525 + 1013904223) >>> 0;
+      return s / 4294967296;
+    };
+  }
+
+  function setupCanvas(canvas, w, h) {
+    var dpr = window.devicePixelRatio || 1;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    var ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.imageSmoothingEnabled = false;
+    return ctx;
+  }
+
+  /* ================= toy ballot generator ================= */
+
+  var BW = 120, BH = 84, BORDER = 4, STREAK_X = 79;
+
+  function makeBallot(withStreak) {
+    var rng = makeRng(20260715);
+    var px = new Uint8Array(BW * BH); // 0 = paper, 1 = ink
+    function set(x, y) {
+      if (x >= 0 && x < BW && y >= 0 && y < BH) px[y * BW + x] = 1;
+    }
+    function rect(x0, y0, w, h) {
+      for (var y = y0; y < y0 + h; y++) for (var x = x0; x < x0 + w; x++) set(x, y);
+    }
+
+    // timing marks: top & bottom rows
+    for (var mx = 6; mx < BW - 8; mx += 10) { rect(mx, 1, 5, 3); rect(mx, BH - 4, 5, 3); }
+    // timing marks: left & right columns (inside the excluded border region)
+    for (var my = 8; my < BH - 8; my += 10) { rect(1, my, 3, 3); rect(BW - 4, my, 3, 3); }
+
+    // "text" lines: horizontal dashes
+    var textRows = [10, 14, 18, 26, 30, 38];
+    for (var t = 0; t < textRows.length; t++) {
+      var y = textRows[t];
+      var x = 8 + Math.floor(rng() * 4);
+      while (x < BW - 12) {
+        var w = 3 + Math.floor(rng() * 8);
+        if (rng() < 0.82) rect(x, y, w, 2);
+        x += w + 2 + Math.floor(rng() * 3);
+      }
+    }
+
+    // bubbles: outlines, two filled
+    var filled = [[44, 56], [92, 66]];
+    for (var by = 46; by <= 76; by += 10) {
+      for (var bx = 20; bx <= 104; bx += 24) {
+        var isFilled = filled.some(function (f) { return f[0] === bx && f[1] === by; });
+        for (var dy = 0; dy < 5; dy++) {
+          for (var dx = 0; dx < 9; dx++) {
+            var edge = dy === 0 || dy === 4 || dx === 0 || dx === 8;
+            var corner = (dy === 0 || dy === 4) && (dx === 0 || dx === 8);
+            if (corner) continue;
+            if (isFilled || edge) set(bx + dx, by + dy);
+          }
+        }
+      }
+    }
+
+    // speckle noise
+    for (var n = 0; n < BW * BH; n++) if (rng() < 0.004) px[n] = 1;
+
+    // streak: 2px wide, tiny gaps only
+    if (withStreak) {
+      var gapAt = [11, 12, 29, 47, 48, 63, 70];
+      for (var sy = 0; sy < BH; sy++) {
+        if (gapAt.indexOf(sy) !== -1) continue;
+        set(STREAK_X, sy); set(STREAK_X + 1, sy);
+      }
+    }
+
+    // keep non-streak interior columns safely below the 25% gate
+    var gate = Math.ceil(BH * 0.25);
+    for (var cx = BORDER; cx < BW - BORDER; cx++) {
+      if (withStreak && (cx === STREAK_X || cx === STREAK_X + 1)) continue;
+      var count = 0, ys = [];
+      for (var cy = 0; cy < BH; cy++) if (px[cy * BW + cx]) { count++; ys.push(cy); }
+      var k = ys.length - 1;
+      while (count > gate - 3 && k >= 0) {
+        if (rng() < 0.5) { px[ys[k] * BW + cx] = 0; count--; }
+        k--;
+      }
+    }
+    return px;
+  }
+
+  function ballotImageData(px, ctx) {
+    var img = ctx.createImageData(BW, BH);
+    for (var i = 0; i < px.length; i++) {
+      var c = px[i] ? [0x23, 0x26, 0x2e] : [0xea, 0xe6, 0xdc];
+      img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2]; img.data[i * 4 + 3] = 255;
+    }
+    return img;
+  }
+
+  function makeBase(px) {
+    var off = document.createElement('canvas');
+    off.width = BW; off.height = BH;
+    var octx = off.getContext('2d');
+    octx.putImageData(ballotImageData(px, octx), 0, 0);
+    return off;
+  }
+
+  function columnCounts(px) {
+    var counts = new Uint16Array(BW);
+    for (var y = 0; y < BH; y++)
+      for (var x = 0; x < BW; x++)
+        counts[x] += px[y * BW + x];
+    return counts;
+  }
+
+  // cumulative counts by row, for partial bars during the row-major sweep
+  function cumCounts(px) {
+    var cum = [new Uint16Array(BW)];
+    for (var y = 0; y < BH; y++) {
+      var prev = cum[y], next = new Uint16Array(BW);
+      for (var x = 0; x < BW; x++) next[x] = prev[x] + px[y * BW + x];
+      cum.push(next);
+    }
+    return cum;
+  }
+
+  /* ================= intro figure ================= */
+
+  var introPx = makeBallot(true);
+  var INTRO_S = 3;
+  var introCtx = setupCanvas(document.getElementById('introCanvas'), BW * INTRO_S, BH * INTRO_S);
+  (function drawIntro() {
+    introCtx.drawImage(makeBase(introPx), 0, 0, BW * INTRO_S, BH * INTRO_S);
+    introCtx.strokeStyle = C.missBright;
+    introCtx.lineWidth = 1.5;
+    introCtx.strokeRect((STREAK_X - 1.5) * INTRO_S, 0.5, 5 * INTRO_S, BH * INTRO_S - 1);
+  })();
+
+  /* ================= figure A: memory walk ================= */
+
+  var GW = 24, GH = 10, CELL = 20, GAP = 2;
+  var LINE = 8; // toy cache line, bytes
+  var SCELL = 13, SGAP = 1, SPERROW = 48, SROWH = 22;
+
+  var gridA = (function () {
+    var rng = makeRng(7);
+    var a = new Uint8Array(GW * GH);
+    var blobs = [[9, 3], [9, 4], [10, 4], [9, 5], [16, 7], [17, 7], [4, 8], [20, 2]];
+    blobs.forEach(function (b) { a[b[1] * GW + b[0]] = 1; });
+    for (var i = 0; i < a.length; i++) if (rng() < 0.03) a[i] = 1;
+    return a;
+  })();
+
+  var gridCanvas = document.getElementById('gridCanvas');
+  var stripCanvas = document.getElementById('stripCanvas');
+  var gridW = GW * (CELL + GAP) + GAP, gridH = GH * (CELL + GAP) + GAP;
+  var stripRows = Math.ceil((GW * GH) / SPERROW);
+  var stripW = 36 + SPERROW * (SCELL + SGAP) + 4, stripH = stripRows * SROWH + 6;
+  var gctx = setupCanvas(gridCanvas, gridW, gridH);
+  var sctx = setupCanvas(stripCanvas, stripW, stripH);
+
+  var A = {
+    reads: [],        // list of {idx, missFlag}
+    linesFetched: {}, // line -> true
+    mode: null,
+    step: 0,
+    total: 0,
+    timer: null,
+    hover: null,
+    ranCol: null,
+    ranRow: null
+  };
+  var COL_X = 9, ROW_Y = 4;
+
+  function lineOf(idx) { return Math.floor(idx / LINE); }
+
+  function drawA() {
+    // grid
+    gctx.clearRect(0, 0, gridW, gridH);
+    var readMap = {};
+    A.reads.forEach(function (r) { readMap[r.idx] = r.miss; });
+    for (var y = 0; y < GH; y++) {
+      for (var x = 0; x < GW; x++) {
+        var idx = y * GW + x;
+        var cx = GAP + x * (CELL + GAP), cy = GAP + y * (CELL + GAP);
+        gctx.fillStyle = gridA[idx] ? C.inkPx : C.paper;
+        gctx.fillRect(cx, cy, CELL, CELL);
+        if (idx in readMap) {
+          gctx.fillStyle = readMap[idx] ? C.miss : C.hit;
+          gctx.globalAlpha = 0.55;
+          gctx.fillRect(cx, cy, CELL, CELL);
+          gctx.globalAlpha = 1;
+        }
+      }
+    }
+    if (A.hover !== null) {
+      var hx = A.hover % GW, hy = Math.floor(A.hover / GW);
+      gctx.strokeStyle = C.white;
+      gctx.lineWidth = 2;
+      gctx.strokeRect(GAP + hx * (CELL + GAP) + 1, GAP + hy * (CELL + GAP) + 1, CELL - 2, CELL - 2);
+    }
+    // current read marker
+    if (A.reads.length && A.step < A.total) {
+      var cur = A.reads[A.reads.length - 1];
+      var qx = cur.idx % GW, qy = Math.floor(cur.idx / GW);
+      gctx.strokeStyle = C.white;
+      gctx.lineWidth = 2;
+      gctx.strokeRect(GAP + qx * (CELL + GAP), GAP + qy * (CELL + GAP), CELL, CELL);
+    }
+
+    // strip
+    sctx.clearRect(0, 0, stripW, stripH);
+    sctx.font = '10px ui-monospace, Menlo, Consolas, monospace';
+    for (var i = 0; i < GW * GH; i++) {
+      var srow = Math.floor(i / SPERROW), scol = i % SPERROW;
+      var sx = 36 + scol * (SCELL + SGAP), sy = 4 + srow * SROWH;
+      if (scol === 0) {
+        sctx.fillStyle = C.panelMuted;
+        sctx.fillText(String(i), 4, sy + 11);
+      }
+      sctx.fillStyle = gridA[i] ? C.inkPx : C.paper;
+      sctx.fillRect(sx, sy, SCELL, SCELL);
+      if (i in readMap) {
+        sctx.fillStyle = readMap[i] ? C.miss : C.hit;
+        sctx.globalAlpha = 0.6;
+        sctx.fillRect(sx, sy, SCELL, SCELL);
+        sctx.globalAlpha = 1;
+      }
+      if (A.hover === i) {
+        sctx.strokeStyle = C.white;
+        sctx.lineWidth = 2;
+        sctx.strokeRect(sx + 0.5, sy + 0.5, SCELL - 1, SCELL - 1);
+      }
+      // cache line ticks
+      if (i % LINE === 0) {
+        sctx.strokeStyle = '#3d4250';
+        sctx.lineWidth = 1;
+        sctx.beginPath();
+        sctx.moveTo(sx - 1, sy - 2);
+        sctx.lineTo(sx - 1, sy + SCELL + 2);
+        sctx.stroke();
+      }
+    }
+    // fetched-line underlines
+    Object.keys(A.linesFetched).forEach(function (ln) {
+      var start = ln * LINE;
+      var srow = Math.floor(start / SPERROW), scol = start % SPERROW;
+      var sx = 36 + scol * (SCELL + SGAP), sy = 4 + srow * SROWH;
+      sctx.strokeStyle = C.missBright;
+      sctx.lineWidth = 2;
+      sctx.beginPath();
+      sctx.moveTo(sx, sy + SCELL + 3);
+      sctx.lineTo(sx + LINE * (SCELL + SGAP) - SGAP, sy + SCELL + 3);
+      sctx.stroke();
+    });
+  }
+
+  function summarizeA(which, reads, misses) {
+    var el = document.getElementById(which === 'col' ? 'resCol' : 'resRow');
+    var label = which === 'col' ? 'column order —' : 'row order&nbsp;&nbsp;&nbsp; —';
+    el.innerHTML = label + ' <span class="filled">' + reads + ' pixels · ' +
+      '<span class="missc">' + misses + ' cache-line fetch' + (misses === 1 ? '' : 'es') + '</span> · ' +
+      (misses / reads).toFixed(2) + ' fetches/pixel</span>';
+  }
+
+  function stepA() {
+    var idx, miss;
+    if (A.mode === 'col') {
+      idx = A.step * GW + COL_X;
+    } else {
+      idx = ROW_Y * GW + A.step;
+    }
+    var ln = lineOf(idx);
+    miss = !(ln in A.linesFetched);
+    if (miss) A.linesFetched[ln] = true;
+    A.reads.push({ idx: idx, miss: miss });
+    A.step++;
+    drawA();
+    if (A.step >= A.total) {
+      clearInterval(A.timer);
+      A.timer = null;
+      var misses = A.reads.filter(function (r) { return r.miss; }).length;
+      summarizeA(A.mode, A.reads.length, misses);
+      setButtonsA(false);
+    }
+  }
+
+  function runA(mode) {
+    if (A.timer) return;
+    A.mode = mode;
+    A.reads = [];
+    A.linesFetched = {};
+    A.step = 0;
+    A.total = mode === 'col' ? GH : GW;
+    setButtonsA(true);
+    if (REDUCED) {
+      while (A.step < A.total) {
+        var idx = mode === 'col' ? A.step * GW + COL_X : ROW_Y * GW + A.step;
+        var ln = lineOf(idx);
+        var miss = !(ln in A.linesFetched);
+        if (miss) A.linesFetched[ln] = true;
+        A.reads.push({ idx: idx, miss: miss });
+        A.step++;
+      }
+      drawA();
+      var misses = A.reads.filter(function (r) { return r.miss; }).length;
+      summarizeA(mode, A.reads.length, misses);
+      setButtonsA(false);
+      return;
+    }
+    A.timer = setInterval(stepA, mode === 'col' ? 190 : 90);
+  }
+
+  function setButtonsA(running) {
+    document.getElementById('btnCol').disabled = running;
+    document.getElementById('btnRow').disabled = running;
+  }
+
+  document.getElementById('btnCol').addEventListener('click', function () { runA('col'); });
+  document.getElementById('btnRow').addEventListener('click', function () { runA('row'); });
+  document.getElementById('btnResetA').addEventListener('click', function () {
+    if (A.timer) { clearInterval(A.timer); A.timer = null; }
+    A.reads = []; A.linesFetched = {}; A.mode = null; A.step = 0; A.total = 0;
+    document.getElementById('resCol').innerHTML = 'column order — <span class="filled">not run yet</span>';
+    document.getElementById('resRow').innerHTML = 'row order&nbsp;&nbsp;&nbsp; — <span class="filled">not run yet</span>';
+    setButtonsA(false);
+    drawA();
+  });
+
+  gridCanvas.addEventListener('mousemove', function (e) {
+    var r = gridCanvas.getBoundingClientRect();
+    var x = Math.floor((e.clientX - r.left - GAP) / (CELL + GAP));
+    var y = Math.floor((e.clientY - r.top - GAP) / (CELL + GAP));
+    if (x < 0 || x >= GW || y < 0 || y >= GH) { A.hover = null; }
+    else {
+      A.hover = y * GW + x;
+      document.getElementById('readoutA').textContent =
+        'pixel (x=' + x + ', y=' + y + ')  →  raw[' + y + '·24 + ' + x + '] = raw[' + A.hover + ']  ·  cache line ' + lineOf(A.hover);
+    }
+    drawA();
+  });
+  gridCanvas.addEventListener('mouseleave', function () {
+    A.hover = null;
+    document.getElementById('readoutA').textContent = 'hover the grid to see where a pixel lives in memory';
+    drawA();
+  });
+
+  drawA();
+
+  /* ================= figure B: the race ================= */
+
+  var SCALE = 3;
+  var BALLOT_W = BW * SCALE, BALLOT_H = BH * SCALE;
+  var BARS_H = 72, BAR_MAX = 58;
+  var REAL_OLD_MS = 2.8;
+  var REAL_NEW_ROW_MS = 0.52;
+  var REAL_NEW_DETAIL_MS = 0.08;
+  var SLOWDOWN = 2400; // animation ms per real ms
+
+  var GATE = 0.25, TWO_COL = 0.75, MAX_GAP = 3;
+  var X0 = BORDER, X1 = BW - BORDER - 1; // interior columns, inclusive
+  var NCOLS = X1 - X0 + 1;
+  var OLD_TOTAL_PX = NCOLS * BH;
+  var NEW_TOTAL_PX = BW * BH;
+
+  var bctxOld = setupCanvas(document.getElementById('ballotOld'), BALLOT_W, BALLOT_H);
+  var bctxNew = setupCanvas(document.getElementById('ballotNew'), BALLOT_W, BALLOT_H);
+  var barsOldC = document.getElementById('barsOld');
+  var barsNewC = document.getElementById('barsNew');
+  var barCtxOld = setupCanvas(barsOldC, BALLOT_W, BARS_H);
+  var barCtxNew = setupCanvas(barsNewC, BALLOT_W, BARS_H);
+  barsOldC.style.marginTop = '6px';
+  barsNewC.style.marginTop = '6px';
+
+  var B = {};
+
+  function computeVerdict(px, counts) {
+    var candidates = [];
+    for (var x = X0; x <= X1; x++) {
+      if (counts[x] / BH >= GATE) candidates.push(x);
+    }
+    var streakCols = {};
+    candidates.forEach(function (x) {
+      if (x + 1 >= BW) return;
+      var both = 0, gap = 0, maxGap = 0;
+      for (var y = 0; y < BH; y++) {
+        if (px[y * BW + x] || px[y * BW + x + 1]) {
+          both++;
+          if (gap > maxGap) maxGap = gap;
+          gap = 0;
+        } else gap++;
+      }
+      if (gap > maxGap) maxGap = gap;
+      if (both / BH >= TWO_COL && maxGap <= MAX_GAP) {
+        streakCols[x] = true;
+        if (counts[x + 1] / BH >= GATE) streakCols[x + 1] = true;
+      }
+    });
+    var cols = Object.keys(streakCols).map(Number).sort(function (a, b) { return a - b; });
+    return { candidates: candidates, streakCols: cols };
+  }
+
+  function resetRace() {
+    if (B.raf) cancelAnimationFrame(B.raf);
+    var withStreak = document.getElementById('chkStreak').checked;
+    var px = makeBallot(withStreak);
+    B = {
+      px: px,
+      base: makeBase(px),
+      counts: columnCounts(px),
+      cum: cumCounts(px),
+      verdict: null,
+      running: false,
+      raf: null,
+      animMs: 0,
+      lastT: null,
+      oldDone: false,
+      newDone: false,
+      oldDoneAt: null,
+      newDoneAt: null
+    };
+    B.verdict = computeVerdict(px, B.counts);
+    document.getElementById('btnRace').disabled = false;
+    document.getElementById('banner').textContent = '';
+    document.getElementById('verdictOld').textContent = '';
+    document.getElementById('verdictOld').className = 'race-verdict';
+    document.getElementById('verdictNew').textContent = '';
+    document.getElementById('verdictNew').className = 'race-verdict';
+    document.getElementById('statusOld').textContent = 'idle';
+    document.getElementById('statusNew').textContent = 'idle';
+    document.getElementById('clockOld').textContent = '0.00 ms';
+    document.getElementById('clockNew').textContent = '0.00 ms';
+    drawRace();
+  }
+
+  function verdictText(v) {
+    if (!v.streakCols.length) {
+      return v.candidates.length
+        ? '0 streaks (candidates rejected by detailed check)'
+        : '0 candidate columns · 0 streaks';
+    }
+    return '1 streak · columns ' + v.streakCols[0] + '–' + v.streakCols[v.streakCols.length - 1];
+  }
+
+  function drawBallotPanel(ctx, mode, prog) {
+    ctx.clearRect(0, 0, BALLOT_W, BALLOT_H);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(B.base, 0, 0, BALLOT_W, BALLOT_H);
+
+    if (mode === 'old') {
+      var col = Math.min(Math.floor(prog / BH), NCOLS - 1);
+      var yIn = prog - col * BH;
+      if (prog > 0) {
+        ctx.fillStyle = 'rgba(217, 119, 6, 0.14)';
+        ctx.fillRect(X0 * SCALE, 0, col * SCALE, BALLOT_H);
+        if (prog < OLD_TOTAL_PX) {
+          ctx.fillStyle = C.missBright;
+          ctx.fillRect((X0 + col) * SCALE, 0, SCALE, Math.max(2, yIn * SCALE));
+        }
+      }
+    } else {
+      var row = Math.min(Math.floor(prog / BW), BH - 1);
+      if (prog > 0) {
+        ctx.fillStyle = 'rgba(13, 148, 136, 0.14)';
+        ctx.fillRect(0, 0, BALLOT_W, row * SCALE);
+        if (prog < NEW_TOTAL_PX) {
+          ctx.fillStyle = C.hitBright;
+          ctx.fillRect(0, row * SCALE, BALLOT_W, SCALE);
+        }
+      }
+    }
+  }
+
+  function drawDetailHighlight(ctx, cols, color) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    cols.forEach(function (x) {
+      ctx.strokeRect(x * SCALE - 1, 0.5, SCALE * 2 + 2, BALLOT_H - 1);
+    });
+  }
+
+  function drawBars(ctx, visible, highlightCandidates) {
+    ctx.clearRect(0, 0, BALLOT_W, BARS_H);
+    var baseY = BARS_H - 4;
+    var gateY = baseY - GATE * BAR_MAX;
+    ctx.strokeStyle = '#565d6b';
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(X0 * SCALE, gateY);
+    ctx.lineTo((X1 + 1) * SCALE, gateY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = '9px ui-monospace, Menlo, Consolas, monospace';
+    ctx.fillStyle = C.panelMuted;
+    ctx.fillText('25%', (X1 + 1) * SCALE - 20, gateY - 3);
+
+    for (var x = X0; x <= X1; x++) {
+      var v = visible(x);
+      if (v == null) continue;
+      var h = (v / BH) * BAR_MAX;
+      var isCand = highlightCandidates && v / BH >= GATE;
+      ctx.fillStyle = isCand ? C.miss : C.bar;
+      ctx.fillRect(x * SCALE, baseY - h, SCALE - 1, Math.max(h, v > 0 ? 1 : 0));
+    }
+    // baseline
+    ctx.strokeStyle = '#3d4250';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(X0 * SCALE, baseY + 1.5);
+    ctx.lineTo((X1 + 1) * SCALE, baseY + 1.5);
+    ctx.stroke();
+  }
+
+  function drawRace() {
+    var realOld = Math.min(B.animMs / SLOWDOWN, REAL_OLD_MS);
+    var realNewTotal = REAL_NEW_ROW_MS + (B.verdict.candidates.length ? REAL_NEW_DETAIL_MS : 0);
+    var realNew = Math.min(B.animMs / SLOWDOWN, realNewTotal);
+
+    /* — old panel — */
+    var oldProg = Math.floor((realOld / REAL_OLD_MS) * OLD_TOTAL_PX);
+    drawBallotPanel(bctxOld, 'old', oldProg);
+    var oldCol = Math.min(Math.floor(oldProg / BH), NCOLS - 1);
+    drawBars(barCtxOld, function (x) {
+      return x - X0 < oldCol || oldProg >= OLD_TOTAL_PX ? B.counts[x] : null;
+    }, true);
+    if (oldProg >= OLD_TOTAL_PX && B.verdict.streakCols.length) {
+      drawDetailHighlight(bctxOld, [B.verdict.streakCols[0]], C.missBright);
+    }
+    document.getElementById('clockOld').textContent = realOld.toFixed(2) + ' ms';
+    var stOld = document.getElementById('statusOld');
+    if (!B.running && B.animMs === 0) stOld.textContent = 'idle';
+    else if (oldProg < OLD_TOTAL_PX) {
+      stOld.textContent = 'column ' + (oldCol + 1) + ' / ' + NCOLS + ' · ' +
+        oldProg.toLocaleString() + ' strided reads';
+    } else {
+      stOld.textContent = OLD_TOTAL_PX.toLocaleString() + ' strided reads · done';
+      if (!B.oldDone) {
+        B.oldDone = true;
+        B.oldDoneAt = realOld;
+        var vo = document.getElementById('verdictOld');
+        vo.textContent = verdictText(B.verdict);
+        vo.className = 'race-verdict done';
+        maybeBanner();
+      }
+    }
+
+    /* — new panel — */
+    var rowPhase = Math.min(realNew / REAL_NEW_ROW_MS, 1);
+    var newProg = Math.floor(rowPhase * NEW_TOTAL_PX);
+    drawBallotPanel(bctxNew, 'new', newProg);
+    var rowsDone = Math.min(Math.floor(newProg / BW), BH);
+    drawBars(barCtxNew, function (x) { return B.cum[rowsDone][x]; }, rowPhase >= 1);
+    if (rowPhase >= 1 && B.verdict.candidates.length) {
+      drawDetailHighlight(bctxNew, [B.verdict.candidates[0]],
+        realNew >= realNewTotal ? C.hitBright : C.missBright);
+    }
+    document.getElementById('clockNew').textContent = realNew.toFixed(2) + ' ms';
+    var stNew = document.getElementById('statusNew');
+    if (!B.running && B.animMs === 0) stNew.textContent = 'idle';
+    else if (rowPhase < 1) {
+      stNew.textContent = 'row ' + rowsDone + ' / ' + BH + ' · ' +
+        newProg.toLocaleString() + ' sequential reads';
+    } else if (realNew < realNewTotal) {
+      stNew.textContent = 'detailed check: ' + B.verdict.candidates.length +
+        ' candidate column' + (B.verdict.candidates.length === 1 ? '' : 's');
+    } else {
+      stNew.textContent = NEW_TOTAL_PX.toLocaleString() + ' sequential reads · ' +
+        (B.verdict.candidates.length
+          ? 'walked ' + (B.verdict.candidates.length + 1) + ' columns · done'
+          : 'walked 0 columns · done');
+      if (!B.newDone) {
+        B.newDone = true;
+        B.newDoneAt = realNew;
+        var vn = document.getElementById('verdictNew');
+        vn.textContent = verdictText(B.verdict);
+        vn.className = 'race-verdict done';
+        maybeBanner();
+      }
+    }
+  }
+
+  function maybeBanner() {
+    if (B.oldDoneAt == null || B.newDoneAt == null) return;
+    var ratio = (B.oldDoneAt / B.newDoneAt).toFixed(1);
+    document.getElementById('banner').textContent =
+      '■ identical verdicts — the row-major pass finished ' + ratio + '× sooner';
+  }
+
+  function raceTick(t) {
+    if (B.lastT != null) B.animMs += t - B.lastT;
+    B.lastT = t;
+    drawRace();
+    if (B.oldDone && B.newDone) {
+      B.running = false;
+      return;
+    }
+    B.raf = requestAnimationFrame(raceTick);
+  }
+
+  document.getElementById('btnRace').addEventListener('click', function () {
+    if (B.running) return;
+    if (B.animMs > 0) resetRace();
+    B.running = true;
+    B.lastT = null;
+    document.getElementById('btnRace').disabled = true;
+    if (REDUCED) {
+      B.animMs = REAL_OLD_MS * SLOWDOWN + 1;
+      drawRace();
+      B.running = false;
+      document.getElementById('btnRace').disabled = false;
+      return;
+    }
+    B.raf = requestAnimationFrame(raceTick);
+  });
+  document.getElementById('btnResetB').addEventListener('click', function () {
+    resetRace();
+  });
+  document.getElementById('chkStreak').addEventListener('change', resetRace);
+
+  // race completes -> re-enable button
+  var raceObserver = setInterval(function () {
+    if (B.oldDone && B.newDone) document.getElementById('btnRace').disabled = false;
+  }, 300);
+
+  barsHover(barsOldC);
+  barsHover(barsNewC);
+  function barsHover(canvas) {
+    canvas.addEventListener('mousemove', function (e) {
+      var r = canvas.getBoundingClientRect();
+      var x = Math.floor((e.clientX - r.left) / SCALE);
+      if (x < X0 || x > X1) return;
+      var count = B.counts[x];
+      var pct = Math.round((count / BH) * 100);
+      var status = count / BH >= GATE ? 'CANDIDATE — gets the detailed check' : 'below the gate — skipped';
+      document.getElementById('readoutB').textContent =
+        'column ' + x + ' · ' + count + '/' + BH + ' black (' + pct + '%) · ' + status;
+    });
+    canvas.addEventListener('mouseleave', function () {
+      document.getElementById('readoutB').textContent = 'hover the bars to inspect a column';
+    });
+  }
+
+  resetRace();
+})();
+</script>
+
+</body>
+</html>
