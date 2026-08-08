@@ -19,4 +19,4 @@ render identically for as long as the links live.
 1. Add a self-contained `*.html` file at the repo root (no CDN scripts, fonts,
    or other external requests).
 2. Add it to the list in `index.html` and the table above.
-3. Push to `main`, then update the `gh-pages` branch to match.
+3. Push to `main` — the Deploy Pages workflow publishes automatically.
