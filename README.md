@@ -13,6 +13,7 @@ render identically for as long as the links live.
 | Page | Subject |
 | ---- | ------- |
 | [streak-detection.html](https://votingworks.github.io/explainers/streak-detection.html) | How reordering pixel reads to match memory layout made ballot streak detection 5× faster (`vxsuite` ballot-interpreter) |
+| [otsu-sharding.html](https://votingworks.github.io/explainers/otsu-sharding.html) | How sharding the Otsu histogram into eight interleaved copies halved page preparation — out-of-order execution, not SIMD (`vxsuite` ballot-interpreter) |
 
 ## Adding an explainer
 
