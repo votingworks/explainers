@@ -1,0 +1,881 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Every Other Line — finding QR codes at half density</title>
+<style>
+  :root {
+    --bg: #f6f4ee;
+    --ink: #211e19;
+    --muted: #6f695e;
+    --accent: #0f766e;
+    --rule: #ddd8cc;
+    --code-bg: #eeebe1;
+    --code-ink: #2a2721;
+    --panel: #14161a;
+    --panel-edge: #2a2e36;
+    --panel-text: #cfcabe;
+    --panel-muted: #8a8fa0;
+    --hit: #0d9488;
+    --miss: #d97706;
+    --hit-bright: #1fc2af;
+    --miss-bright: #f0a33c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17181c;
+      --ink: #e6e2d8;
+      --muted: #9d978b;
+      --accent: #3db4a6;
+      --rule: #2c2e34;
+      --code-bg: #1d1f24;
+      --code-ink: #d5d1c6;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17181c;
+    --ink: #e6e2d8;
+    --muted: #9d978b;
+    --accent: #3db4a6;
+    --rule: #2c2e34;
+    --code-bg: #1d1f24;
+    --code-ink: #d5d1c6;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Charter', 'Bitstream Charter', 'Iowan Old Style', 'Source Serif 4', Georgia, serif;
+    font-size: 17px;
+    line-height: 1.6;
+    margin: 0;
+    padding: 0 20px 80px;
+  }
+  .mono, code, pre, button, .hud, .eyebrow, .stat-num, .stat-label, .readout, .fig-caption, .sec-num, .race-row, label.slider {
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+  }
+
+  .col { max-width: 68ch; margin: 0 auto; }
+  .wide { max-width: 880px; margin: 0 auto; }
+
+  header { padding: 64px 0 8px; }
+  .eyebrow { font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); margin: 0 0 18px; }
+  h1 {
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+    font-size: clamp(1.7rem, 4.5vw, 2.5rem);
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+  .dek { font-size: 1.12rem; color: var(--muted); margin: 0 0 36px; max-width: 56ch; text-wrap: balance; }
+
+  .stats { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 24px; }
+  .stat { flex: 1 1 180px; border-top: 2px solid var(--accent); background: var(--code-bg); padding: 14px 16px 12px; }
+  .stat-num { font-size: 1.55rem; font-weight: 650; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; display: block; }
+  .stat-label { font-size: 11.5px; color: var(--muted); display: block; margin-top: 4px; line-height: 1.45; }
+
+  h2 { font-size: 1.35rem; margin: 56px 0 12px; letter-spacing: -0.01em; text-wrap: balance; }
+  .sec-num { color: var(--accent); font-size: 0.85em; font-weight: 600; margin-right: 10px; }
+  p { margin: 0 0 16px; }
+  a { color: var(--accent); }
+  strong { font-weight: 650; }
+
+  code { background: var(--code-bg); color: var(--code-ink); font-size: 0.85em; padding: 1px 5px; border-radius: 3px; }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    font-size: 13px;
+    line-height: 1.55;
+    padding: 16px 18px;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 0;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .cmt { color: var(--accent); opacity: 0.85; }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-edge);
+    border-radius: 8px;
+    padding: 18px;
+    margin: 24px 0 10px;
+    color: var(--panel-text);
+    overflow-x: auto;
+  }
+  .fig-caption { font-size: 12px; color: var(--muted); line-height: 1.55; margin: 0 0 32px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 16px; }
+  button {
+    background: transparent;
+    color: var(--panel-text);
+    border: 1px solid #4a5060;
+    border-radius: 5px;
+    font-size: 12.5px;
+    padding: 7px 14px;
+    cursor: pointer;
+    letter-spacing: 0.02em;
+  }
+  button:hover:not(:disabled) { border-color: var(--hit-bright); color: #fff; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.primary { border-color: var(--hit); background: rgba(13, 148, 136, 0.14); }
+  button.density[aria-pressed="true"] { border-color: var(--miss-bright); color: #fff; background: rgba(217, 119, 6, 0.14); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--hit-bright); outline-offset: 2px; }
+
+  .hud { font-size: 12px; color: var(--panel-muted); font-variant-numeric: tabular-nums; }
+  .readout { font-size: 12px; color: var(--panel-muted); min-height: 1.5em; margin-top: 10px; font-variant-numeric: tabular-nums; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 14px; font-size: 11.5px; color: var(--panel-muted); font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+  canvas { display: block; }
+  .panel-label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--panel-muted); margin: 0 0 8px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .qr-fig { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+  label.slider { display: inline-flex; gap: 8px; align-items: center; font-size: 12.5px; color: var(--panel-text); }
+  input[type="range"] { accent-color: var(--hit); width: 170px; }
+
+  .race-row { display: flex; align-items: center; gap: 12px; margin: 10px 0; font-size: 12.5px; }
+  .race-name { width: 130px; flex: none; color: var(--panel-text); }
+  .race-track { flex: 1; height: 14px; background: #23262e; border-radius: 3px; overflow: hidden; }
+  .race-fill { height: 100%; width: 0%; }
+  .race-fill.full { background: var(--miss); }
+  .race-fill.half { background: var(--hit); }
+  .race-ms { width: 84px; flex: none; text-align: right; font-variant-numeric: tabular-nums; color: var(--panel-text); }
+  .verdict { margin-top: 12px; font-size: 13px; min-height: 1.6em; font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--panel-muted); }
+  .verdict.win { color: var(--hit-bright); }
+
+  /* --- quiz --- */
+  .quiz { display: grid; gap: 18px; margin-top: 24px; }
+  .quiz-q { background: var(--code-bg); border-radius: 8px; padding: 18px 20px; }
+  .quiz-q-text { margin: 0 0 12px; font-weight: 650; }
+  .quiz-opts { display: grid; gap: 8px; }
+  .quiz-opt {
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+    text-align: left;
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 9px 12px;
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    background: var(--bg);
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .quiz-opt:hover:not(:disabled) { border-color: var(--accent); color: var(--ink); background: var(--bg); }
+  .quiz-opt:disabled { cursor: default; opacity: 0.7; }
+  .quiz-opt.correct, .quiz-opt.incorrect { opacity: 1; }
+  .quiz-opt.correct { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); font-weight: 650; }
+  .quiz-opt.incorrect { border-color: var(--miss); box-shadow: inset 3px 0 0 var(--miss); }
+  .quiz-opt.correct::before { content: '\2713\00a0 '; color: var(--accent); }
+  .quiz-opt.incorrect::before { content: '\2717\00a0 '; color: var(--miss); }
+  .quiz-exp { display: none; margin: 12px 0 0; font-size: 0.92rem; color: var(--muted); border-left: 3px solid var(--accent); padding: 2px 0 2px 12px; line-height: 1.55; }
+  .quiz-q.answered .quiz-exp { display: block; }
+  .quiz-foot { display: flex; gap: 14px; align-items: center; margin-top: 14px; }
+  .quiz-score { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .quiz-reset {
+    font-size: 12px; padding: 6px 12px; border: 1px solid var(--rule); border-radius: 5px;
+    background: var(--bg); color: var(--muted); cursor: pointer;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .quiz-reset:hover { border-color: var(--accent); color: var(--ink); }
+
+  footer {
+    margin-top: 72px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+    font-size: 12.5px;
+    color: var(--muted);
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    line-height: 1.8;
+  }
+</style>
+</head>
+<body>
+<div class="col">
+  <header>
+    <p class="eyebrow">ballot-interpreter · qr detection · commit 210663ff</p>
+    <h1>Every other line</h1>
+    <p class="dek">The interpreter finds each ballot's QR code by sweeping the corner of the page with
+    one-dimensional scan lines and watching for the finder patterns' 1:1:3:1:1 signature. The patterns
+    are ~25 pixels wide — so scanning every other line still crosses each one many times, and half the
+    scan lines turn out to be enough for every code in the corpus.</p>
+  </header>
+
+  <div class="stats" role="list">
+    <div class="stat" role="listitem">
+      <span class="stat-num">1.45 → 0.85 ms</span>
+      <span class="stat-label">per detection area — the zedbar scan measured 41% faster</span>
+    </div>
+    <div class="stat" role="listitem">
+      <span class="stat-num">+7 −1</span>
+      <span class="stat-label">the whole diff: one <code>scan_density(2, 2)</code> config call</span>
+    </div>
+    <div class="stat" role="listitem">
+      <span class="stat-num">2,550 images</span>
+      <span class="stat-label">2,465 QR detections re-run: identical successes, failures, payloads, and orientations</span>
+    </div>
+  </div>
+
+  <h2><span class="sec-num">01</span>The code on every ballot</h2>
+  <p>Before the interpreter can score a single bubble, it has to know <em>which ballot</em> it's looking
+  at. That metadata — election, ballot style, sheet — rides in a QR code (~118 px at scan resolution)
+  printed near a corner of every page. The interpreter crops the two corner regions where the code can
+  appear and hands them to a decoder: zedbar first, with rqrr as a fallback, stopping at the first hit.</p>
+  <p>How do you find a two-dimensional code without looking at every pixel in two dimensions? You
+  don't search for the square — you search for its <em>signature</em>. Each of the three big corner
+  squares (the finder patterns) is built so that any horizontal or vertical line through its middle
+  crosses dark and light runs in the ratio <strong>1:1:3:1:1</strong> — dark, light, a triple-wide dark
+  core, light, dark. That ratio survives scaling, and it reads the same left-to-right, right-to-left, up,
+  or down. So the scanner sweeps the region with plain 1-D scan lines and flags every place that ratio
+  appears; where flagged lines cluster, there's a finder pattern.</p>
+</div>
+
+<div class="wide">
+  <div class="panel">
+    <div class="controls">
+      <label class="slider">scan line y <input type="range" id="ySlider" min="0" max="143" value="26" aria-label="Scan line vertical position"> <span id="yVal" class="hud">26</span></label>
+      <span class="hud">drag the slider (or drag on the code) to move the scan line</span>
+    </div>
+    <div class="qr-fig">
+      <div>
+        <p class="panel-label">The QR code at real scan resolution (~3.5 px per module)</p>
+        <canvas id="qrCanvasA" role="img" aria-label="A QR code with a movable horizontal scan line across it"></canvas>
+      </div>
+      <div style="flex:1; min-width:320px">
+        <p class="panel-label">What this scan line sees: dark/light runs, in pixels</p>
+        <canvas id="profileCanvas" role="img" aria-label="The intensity profile of the selected scan line, with 1:1:3:1:1 finder signatures highlighted"></canvas>
+        <div class="readout" id="readoutA" aria-live="polite"></div>
+      </div>
+    </div>
+    <div class="legend">
+      <span><span class="swatch" style="background:var(--hit)"></span>run window matching 1:1:3:1:1 — a finder signature</span>
+      <span><span class="swatch" style="background:var(--miss)"></span>the scan line</span>
+    </div>
+  </div>
+  <p class="fig-caption">The finder patterns and timing/alignment structure here are real QR geometry at
+  the real ballot scale; the data modules are randomized, since detection never reads them — only the
+  decode stage does, after the code has been located. Note the signature only fires for lines through a
+  finder's middle band, and fires twice when one line crosses two finders.</p>
+</div>
+
+<div class="col">
+  <h2><span class="sec-num">02</span>The change: skip every other line</h2>
+  <p>zedbar scanned <em>every</em> row and every column of each detection area. But the signature isn't
+  fragile: a finder pattern's middle band is about 10 px tall at scan resolution, so consecutive scan
+  lines through it are nearly redundant — at full density each finder gets crossed by ~10 signature rows
+  and ~10 signature columns. Clustering needs only a handful. The entire change is one config call:</p>
+  <pre><code>let config = DecoderConfig::new()
+    .enable(config::QrCode)
+    .scan_density(2, 2);   <span class="cmt">// every other row, every other column</span></code></pre>
+  <p style="margin-top:16px">Step through densities below and watch how many scan lines still produce a
+  finder signature. Density 2 keeps a comfortable margin; push further and the margin evaporates —
+  which is exactly why the commit stops at 2:</p>
+</div>
+
+<div class="wide">
+  <div class="panel">
+    <div class="controls">
+      <span class="hud">scan density (1 = every line):</span>
+      <button class="density" data-d="1" aria-pressed="false">1</button>
+      <button class="density" data-d="2" aria-pressed="true">2</button>
+      <button class="density" data-d="4" aria-pressed="false">4</button>
+      <button class="density" data-d="8" aria-pressed="false">8</button>
+      <button class="density" data-d="16" aria-pressed="false">16</button>
+    </div>
+    <div class="qr-fig">
+      <div>
+        <p class="panel-label">Scan lines over the detection area</p>
+        <canvas id="qrCanvasB" role="img" aria-label="The QR code overlaid with horizontal and vertical scan lines at the chosen density; lines that produce a finder signature are highlighted"></canvas>
+      </div>
+      <div style="flex:1; min-width:300px">
+        <p class="panel-label">Signature crossings per finder pattern</p>
+        <div class="readout" id="statsB" style="margin-top:0; line-height:2" aria-live="polite"></div>
+        <div class="verdict" id="verdictB" aria-live="polite"></div>
+      </div>
+    </div>
+    <div class="legend">
+      <span><span class="swatch" style="background:rgba(138,143,160,0.55)"></span>scan line</span>
+      <span><span class="swatch" style="background:var(--hit)"></span>line with a signature on a finder pattern</span>
+      <span><span class="swatch" style="background:var(--miss)"></span>line whose only signature is a chance match in the data</span>
+    </div>
+  </div>
+  <p class="fig-caption">Counts are computed live by running the ratio detector over every drawn line.
+  Note the amber lines: random data occasionally fakes the ratio on a single line, which is exactly why
+  the scanner clusters lines instead of trusting one — real finders produce <em>stacks</em> of agreeing
+  signatures. The work is proportional to the number of lines: density 2 does half the scanning while
+  keeping ~10 crossings per finder.</p>
+</div>
+
+<div class="col">
+  <h2><span class="sec-num">03</span>The bill</h2>
+  <p>Halving the lines doesn't halve the total time: locating clusters, decoding the located symbol, and
+  per-image setup don't shrink. The line-scanning stage dominates, so the measured result is 41% — both
+  bars advance at their measured rates:</p>
+</div>
+
+<div class="wide">
+  <div class="panel">
+    <div class="controls">
+      <button id="btnRunC" class="primary">▶ Run</button>
+      <button id="btnResetC">Reset</button>
+      <span class="hud">per detection area, measured on Intel N97, slowed ~1,800×</span>
+    </div>
+    <div class="race-row">
+      <span class="race-name">every line</span>
+      <div class="race-track"><div class="race-fill full" id="fillFull"></div></div>
+      <span class="race-ms" id="msFull">0.00 ms</span>
+    </div>
+    <div class="race-row">
+      <span class="race-name">every other line</span>
+      <div class="race-track"><div class="race-fill half" id="fillHalf"></div></div>
+      <span class="race-ms" id="msHalf">0.00 ms</span>
+    </div>
+    <div class="verdict" id="verdictC" aria-live="polite"></div>
+  </div>
+  <p class="fig-caption">A page has up to two detection areas, and since the crops became lazy (#9096)
+  the common case scans only one.</p>
+</div>
+
+<div class="col">
+  <h2><span class="sec-num">04</span>Measured identical, not provably identical</h2>
+  <p>Earlier changes in this series were provable no-ops — reordered integer arithmetic. This one is
+  not: detection is a heuristic stage, and in principle a scan grid could be coarse enough to miss a
+  marginal code. The safety argument is empirical instead, and it was made against the whole corpus:
+  2,550 images (2,472 real field scans plus every hmpb and test fixture), 2,465 QR detections —
+  <strong>identical successes, identical failures, identical decoded payloads, identical
+  orientations</strong>. Not "still decodes": <em>identical outcomes in both directions</em>, including
+  the pages that fail to decode.</p>
+  <p>The one observable difference: the reported QR bounds can shift by up to 2 px, because corner
+  positions are estimated from the coarser sampling grid. Those bounds feed only debug images — the
+  decoded payload comes from sampling the code's modules after it's been located, which is why the
+  payloads can't drift even when the bounds do.</p>
+
+  <h2><span class="sec-num">05</span>Check your understanding</h2>
+  <p>Six questions — half on the ideas, half on the code the PR actually changes. Pick an answer to see
+  the explanation; your first try is what's scored.</p>
+  <div class="quiz" id="quiz"></div>
+  <div class="quiz-foot">
+    <span class="quiz-score" id="quizScore" aria-live="polite"></span>
+    <button class="quiz-reset" id="quizReset" type="button">reset quiz</button>
+  </div>
+
+  <footer>
+    commit <strong>210663ff6b</strong> · Scan for QR codes at half density<br>
+    libs/ballot-interpreter · <code>src/bubble-ballot-rust/qr_code/zedbar.rs</code> · +7 −1<br>
+    previously: <a href="streak-detection.html">Same reads, different order</a> ·
+    <a href="otsu-sharding.html">Eight histograms are faster than one</a> ·
+    <a href="bubble-popcount.html">Sixty-four pixels at a time</a> ·
+    <a href="./">all explainers</a>
+  </footer>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var C = {
+    hit: '#0d9488', miss: '#d97706', hitBright: '#1fc2af', missBright: '#f0a33c',
+    panelMuted: '#8a8fa0', paper: '#eae6dc', inkPx: '#23262e', line: 'rgba(138,143,160,0.4)'
+  };
+
+  function setupCanvas(canvas, w, h) {
+    var dpr = window.devicePixelRatio || 1;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    var ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.imageSmoothingEnabled = false;
+    return ctx;
+  }
+
+  function makeRng(seed) {
+    var s = seed >>> 0;
+    return function () {
+      s = (s * 1664525 + 1013904223) >>> 0;
+      return s / 4294967296;
+    };
+  }
+
+  /* ============ QR geometry: version-4-shaped, real ballot scale ============ */
+
+  var MOD = 33, QUIET = 4, MPX = 3.5;
+  var GRID = MOD + 2 * QUIET;
+  var BIT = Math.ceil(GRID * MPX); // 144 px, like the real ~118px code + quiet zone
+
+  function makeMatrix() {
+    var rng = makeRng(20260715);
+    var m = new Uint8Array(MOD * MOD);
+    function set(x, y, v) { m[y * MOD + x] = v; }
+    // data + format: random fill
+    for (var i = 0; i < m.length; i++) m[i] = rng() < 0.47 ? 1 : 0;
+    // finder patterns at three corners, with light separators
+    function finder(fx, fy) {
+      for (var y = -1; y <= 7; y++)
+        for (var x = -1; x <= 7; x++) {
+          var gx = fx + x, gy = fy + y;
+          if (gx < 0 || gy < 0 || gx >= MOD || gy >= MOD) continue;
+          var inCore = x >= 2 && x <= 4 && y >= 2 && y <= 4;
+          var onRing = x >= 0 && x <= 6 && y >= 0 && y <= 6 && (x === 0 || x === 6 || y === 0 || y === 6);
+          set(gx, gy, inCore || onRing ? 1 : 0);
+        }
+    }
+    finder(0, 0);
+    finder(MOD - 7, 0);
+    finder(0, MOD - 7);
+    // timing patterns
+    for (var t = 8; t < MOD - 8; t++) {
+      set(t, 6, t % 2 === 0 ? 1 : 0);
+      set(6, t, t % 2 === 0 ? 1 : 0);
+    }
+    // alignment pattern at (26, 26)
+    for (var ay = -2; ay <= 2; ay++)
+      for (var ax = -2; ax <= 2; ax++) {
+        var edge = Math.max(Math.abs(ax), Math.abs(ay));
+        set(26 + ax, 26 + ay, edge === 2 || edge === 0 ? 1 : 0);
+      }
+    return m;
+  }
+
+  var matrix = makeMatrix();
+
+  // rasterize at real scan scale: bitmap[y*BIT+x], 1 = dark
+  var bitmap = new Uint8Array(BIT * BIT);
+  for (var by = 0; by < BIT; by++) {
+    for (var bx = 0; bx < BIT; bx++) {
+      var gx = Math.floor(bx / MPX) - QUIET;
+      var gy = Math.floor(by / MPX) - QUIET;
+      var dark = gx >= 0 && gy >= 0 && gx < MOD && gy < MOD && matrix[gy * MOD + gx] === 1;
+      bitmap[by * BIT + bx] = dark ? 1 : 0;
+    }
+  }
+
+  // finder centers in bitmap px (module center of each finder's 7x7)
+  var FINDERS = [
+    { name: 'top-left', cx: (QUIET + 3.5) * MPX, cy: (QUIET + 3.5) * MPX },
+    { name: 'top-right', cx: (QUIET + MOD - 3.5) * MPX, cy: (QUIET + 3.5) * MPX },
+    { name: 'bottom-left', cx: (QUIET + 3.5) * MPX, cy: (QUIET + MOD - 3.5) * MPX }
+  ];
+  var FINDER_R = 3.5 * MPX; // half of the 7-module square
+
+  // runs along a row (or column): [{dark, len, start}]
+  function runsOf(line) {
+    var runs = [];
+    var cur = line[0], len = 1, start = 0;
+    for (var i = 1; i < line.length; i++) {
+      if (line[i] === cur) { len++; continue; }
+      runs.push({ dark: cur === 1, len: len, start: start });
+      cur = line[i]; start = i; len = 1;
+    }
+    runs.push({ dark: cur === 1, len: len, start: start });
+    return runs;
+  }
+
+  function getRow(y) {
+    return bitmap.subarray(y * BIT, (y + 1) * BIT);
+  }
+  function getCol(x) {
+    var col = new Uint8Array(BIT);
+    for (var y = 0; y < BIT; y++) col[y] = bitmap[y * BIT + x];
+    return col;
+  }
+
+  // find 1:1:3:1:1 windows (dark,light,dark,light,dark) in a run list
+  function findSignatures(runs) {
+    var sigs = [];
+    for (var i = 0; i + 4 < runs.length; i++) {
+      if (!runs[i].dark) continue;
+      var w = [runs[i], runs[i + 1], runs[i + 2], runs[i + 3], runs[i + 4]];
+      var total = w[0].len + w[1].len + w[2].len + w[3].len + w[4].len;
+      var mod = total / 7;
+      if (mod < 1) continue;
+      var tol = mod * 0.5;
+      var ok =
+        Math.abs(w[0].len - mod) < tol &&
+        Math.abs(w[1].len - mod) < tol &&
+        Math.abs(w[2].len - 3 * mod) < 3 * tol &&
+        Math.abs(w[3].len - mod) < tol &&
+        Math.abs(w[4].len - mod) < tol;
+      if (ok) sigs.push({ start: w[0].start, end: w[4].start + w[4].len, runs: w });
+    }
+    return sigs;
+  }
+
+  /* ============ figure A: one scan line ============ */
+
+  var SCALE = 2;
+  var qrCtxA = setupCanvas(document.getElementById('qrCanvasA'), BIT * SCALE, BIT * SCALE);
+  var PROF_W = 440, PROF_H = 96;
+  var profCtx = setupCanvas(document.getElementById('profileCanvas'), PROF_W, PROF_H);
+
+  var qrBase = (function () {
+    var off = document.createElement('canvas');
+    off.width = BIT; off.height = BIT;
+    var octx = off.getContext('2d');
+    var img = octx.createImageData(BIT, BIT);
+    for (var i = 0; i < bitmap.length; i++) {
+      var c = bitmap[i] ? [0x23, 0x26, 0x2e] : [0xea, 0xe6, 0xdc];
+      img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2]; img.data[i * 4 + 3] = 255;
+    }
+    octx.putImageData(img, 0, 0);
+    return off;
+  })();
+
+  var A = { y: 26 };
+
+  function drawA() {
+    qrCtxA.imageSmoothingEnabled = false;
+    qrCtxA.drawImage(qrBase, 0, 0, BIT * SCALE, BIT * SCALE);
+    var runs = runsOf(getRow(A.y));
+    var sigs = findSignatures(runs);
+    // signature spans on the QR image
+    sigs.forEach(function (s) {
+      qrCtxA.fillStyle = 'rgba(13, 148, 136, 0.45)';
+      qrCtxA.fillRect(s.start * SCALE, (A.y - 3) * SCALE, (s.end - s.start) * SCALE, 7 * SCALE);
+    });
+    // the scan line
+    qrCtxA.strokeStyle = C.missBright;
+    qrCtxA.lineWidth = 2;
+    qrCtxA.beginPath();
+    qrCtxA.moveTo(0, A.y * SCALE + 1);
+    qrCtxA.lineTo(BIT * SCALE, A.y * SCALE + 1);
+    qrCtxA.stroke();
+
+    // profile strip
+    profCtx.clearRect(0, 0, PROF_W, PROF_H);
+    var xs = PROF_W / BIT;
+    runs.forEach(function (r) {
+      profCtx.fillStyle = r.dark ? '#3a3f4a' : '#e6e2d8';
+      profCtx.fillRect(r.start * xs, 18, r.len * xs, 34);
+    });
+    sigs.forEach(function (s) {
+      profCtx.strokeStyle = C.hitBright;
+      profCtx.lineWidth = 2;
+      profCtx.strokeRect(s.start * xs, 16, (s.end - s.start) * xs, 38);
+      var label = s.runs.map(function (r) { return r.len; }).join(':') + ' ≈ 1:1:3:1:1';
+      profCtx.font = '11px ui-monospace, Menlo, Consolas, monospace';
+      profCtx.fillStyle = C.hitBright;
+      profCtx.fillText(label, Math.min(s.start * xs, PROF_W - profCtx.measureText(label).width - 2), 68);
+    });
+    profCtx.font = '10px ui-monospace, Menlo, Consolas, monospace';
+    profCtx.fillStyle = C.panelMuted;
+    profCtx.fillText('0', 0, 12);
+    profCtx.fillText(BIT + ' px', PROF_W - 38, 12);
+
+    document.getElementById('yVal').textContent = String(A.y);
+    document.getElementById('readoutA').textContent = sigs.length
+      ? sigs.length + ' finder signature' + (sigs.length === 1 ? '' : 's') + ' on this line'
+      : 'no finder signature on this line — data modules produce irregular runs';
+  }
+
+  document.getElementById('ySlider').addEventListener('input', function () {
+    A.y = Number(this.value);
+    drawA();
+  });
+  (function () {
+    var canvas = document.getElementById('qrCanvasA');
+    var dragging = false;
+    function setFromEvent(e) {
+      var r = canvas.getBoundingClientRect();
+      var y = Math.round((e.clientY - r.top) / SCALE);
+      A.y = Math.max(0, Math.min(BIT - 1, y));
+      document.getElementById('ySlider').value = String(A.y);
+      drawA();
+    }
+    canvas.addEventListener('mousedown', function (e) { dragging = true; setFromEvent(e); });
+    window.addEventListener('mousemove', function (e) { if (dragging) setFromEvent(e); });
+    window.addEventListener('mouseup', function () { dragging = false; });
+  })();
+
+  drawA();
+
+  /* ============ figure B: density ============ */
+
+  var qrCtxB = setupCanvas(document.getElementById('qrCanvasB'), BIT * SCALE, BIT * SCALE);
+  var Bst = { density: 2 };
+
+  function crossingsFor(density) {
+    // per finder: how many scanned rows/cols produce a signature overlapping it
+    var perFinder = FINDERS.map(function () { return { rows: 0, cols: 0 }; });
+    var rowClass = {}, colClass = {}; // pos -> 'finder' | 'fake'
+    for (var y = 0; y < BIT; y += density) {
+      var sigs = findSignatures(runsOf(getRow(y)));
+      var hitFinder = false;
+      sigs.forEach(function (s) {
+        FINDERS.forEach(function (f, fi) {
+          var mid = (s.start + s.end) / 2;
+          if (Math.abs(mid - f.cx) < FINDER_R && Math.abs(y - f.cy) < FINDER_R) {
+            perFinder[fi].rows++;
+            hitFinder = true;
+          }
+        });
+      });
+      if (sigs.length) rowClass[y] = hitFinder ? 'finder' : 'fake';
+    }
+    for (var x = 0; x < BIT; x += density) {
+      var sigsC = findSignatures(runsOf(getCol(x)));
+      var hitFinderC = false;
+      sigsC.forEach(function (s) {
+        FINDERS.forEach(function (f, fi) {
+          var mid = (s.start + s.end) / 2;
+          if (Math.abs(mid - f.cy) < FINDER_R && Math.abs(x - f.cx) < FINDER_R) {
+            perFinder[fi].cols++;
+            hitFinderC = true;
+          }
+        });
+      });
+      if (sigsC.length) colClass[x] = hitFinderC ? 'finder' : 'fake';
+    }
+    return { perFinder: perFinder, rowClass: rowClass, colClass: colClass };
+  }
+
+  function drawB() {
+    var d = Bst.density;
+    var res = crossingsFor(d);
+    qrCtxB.imageSmoothingEnabled = false;
+    qrCtxB.drawImage(qrBase, 0, 0, BIT * SCALE, BIT * SCALE);
+    function lineStyle(cls) {
+      if (cls === 'finder') return { color: C.hit, width: 1.5 };
+      if (cls === 'fake') return { color: 'rgba(217, 119, 6, 0.8)', width: 1.5 };
+      return { color: C.line, width: 1 };
+    }
+    qrCtxB.globalAlpha = 0.75;
+    for (var y = 0; y < BIT; y += d) {
+      var st = lineStyle(res.rowClass[y]);
+      qrCtxB.strokeStyle = st.color;
+      qrCtxB.lineWidth = st.width;
+      qrCtxB.beginPath();
+      qrCtxB.moveTo(0, y * SCALE + 0.5);
+      qrCtxB.lineTo(BIT * SCALE, y * SCALE + 0.5);
+      qrCtxB.stroke();
+    }
+    for (var x = 0; x < BIT; x += d) {
+      var stc = lineStyle(res.colClass[x]);
+      qrCtxB.strokeStyle = stc.color;
+      qrCtxB.lineWidth = stc.width;
+      qrCtxB.beginPath();
+      qrCtxB.moveTo(x * SCALE + 0.5, 0);
+      qrCtxB.lineTo(x * SCALE + 0.5, BIT * SCALE);
+      qrCtxB.stroke();
+    }
+    qrCtxB.globalAlpha = 1;
+
+    var nLines = Math.ceil(BIT / d) * 2;
+    var minCross = Infinity;
+    var statsHtml = res.perFinder.map(function (pf, i) {
+      var total = pf.rows + pf.cols;
+      minCross = Math.min(minCross, total);
+      return FINDERS[i].name + ': ' + pf.rows + ' rows + ' + pf.cols + ' cols = ' + total + ' crossings';
+    }).join('<br>');
+    statsHtml = 'scan lines drawn: ' + nLines + ' (of ' + (BIT * 2) + ' at density 1)<br>' + statsHtml;
+    document.getElementById('statsB').innerHTML = statsHtml;
+    var v = document.getElementById('verdictB');
+    if (minCross >= 6) {
+      v.textContent = '■ comfortable margin — clustering needs only a handful of consistent crossings';
+      v.className = 'verdict win';
+    } else if (minCross >= 2) {
+      v.textContent = '■ thin margin — a skewed or noisy code could start missing';
+      v.className = 'verdict';
+      v.style.color = 'var(--miss-bright)';
+      return;
+    } else {
+      v.textContent = '■ ' + minCross + ' crossing' + (minCross === 1 ? '' : 's') + ' on the worst finder — detection is no longer reliable';
+      v.className = 'verdict';
+      v.style.color = 'var(--miss-bright)';
+      return;
+    }
+    v.style.color = '';
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll('button.density'), function (b) {
+    b.addEventListener('click', function () {
+      Bst.density = Number(this.getAttribute('data-d'));
+      Array.prototype.forEach.call(document.querySelectorAll('button.density'), function (x) {
+        x.setAttribute('aria-pressed', String(x === b));
+      });
+      drawB();
+    });
+  });
+
+  drawB();
+
+  /* ============ figure C: measured race ============ */
+
+  var MEAS = { full: 1.45, half: 0.85 };
+  var SLOWDOWN = 1800;
+  var Cst = { animMs: 0, lastT: null, running: false, raf: null };
+
+  function drawC() {
+    var realMs = Cst.animMs / SLOWDOWN;
+    var fF = Math.min(realMs / MEAS.full, 1);
+    var fH = Math.min(realMs / MEAS.half, 1);
+    document.getElementById('fillFull').style.width = (fF * 100) + '%';
+    document.getElementById('fillHalf').style.width = (fH * 100) + '%';
+    document.getElementById('msFull').textContent = Math.min(realMs, MEAS.full).toFixed(2) + ' ms';
+    document.getElementById('msHalf').textContent = Math.min(realMs, MEAS.half).toFixed(2) + ' ms';
+    if (fF >= 1 && fH >= 1) {
+      var v = document.getElementById('verdictC');
+      v.textContent = '■ identical detections — 41% faster per area';
+      v.className = 'verdict win';
+      Cst.running = false;
+      document.getElementById('btnRunC').disabled = false;
+    }
+  }
+  function tickC(t) {
+    if (Cst.lastT != null) Cst.animMs += t - Cst.lastT;
+    Cst.lastT = t;
+    drawC();
+    if (Cst.running) Cst.raf = requestAnimationFrame(tickC);
+  }
+  function resetC() {
+    if (Cst.raf) cancelAnimationFrame(Cst.raf);
+    Cst.animMs = 0; Cst.lastT = null; Cst.running = false;
+    document.getElementById('btnRunC').disabled = false;
+    document.getElementById('fillFull').style.width = '0%';
+    document.getElementById('fillHalf').style.width = '0%';
+    document.getElementById('msFull').textContent = '0.00 ms';
+    document.getElementById('msHalf').textContent = '0.00 ms';
+    var v = document.getElementById('verdictC');
+    v.textContent = ''; v.className = 'verdict';
+  }
+  document.getElementById('btnRunC').addEventListener('click', function () {
+    if (Cst.running) return;
+    if (Cst.animMs > 0) resetC();
+    if (REDUCED) { Cst.animMs = MEAS.full * SLOWDOWN + 1; drawC(); return; }
+    Cst.running = true; Cst.lastT = null; this.disabled = true;
+    Cst.raf = requestAnimationFrame(tickC);
+  });
+  document.getElementById('btnResetC').addEventListener('click', resetC);
+})();
+</script>
+
+<script>
+(function () {
+  'use strict';
+  var QUESTIONS = [
+    {
+      "q": "What exactly does each 1-D scan line look for?",
+      "o": [
+        "A square outline of dark pixels",
+        "Dark and light runs in the ratio 1:1:3:1:1 — the signature of a line crossing a finder pattern's middle band",
+        "The quiet zone: a long run of white pixels",
+        "The alternating timing pattern along row 6"
+      ],
+      "a": 1,
+      "e": "Finder patterns are engineered so any horizontal or vertical line through their middle reads dark:light:dark:light:dark at 1:1:3:1:1 — a ratio that survives scaling and reads the same in every direction. Where lines flagging that ratio cluster, there's a finder. The 2-D problem is solved with 1-D scans."
+    },
+    {
+      "q": "Why is scanning every other row still safe for these ballots?",
+      "o": [
+        "QR error correction repairs whatever the scanner misses",
+        "The finder's middle band is ~10 px tall at scan resolution, so density 2 still crosses it ~5 times per direction — and clustering needs only a handful of consistent crossings",
+        "The rqrr fallback catches anything zedbar misses",
+        "Ballot QR codes are always perfectly axis-aligned"
+      ],
+      "a": 1,
+      "e": "The margin comes from geometry: ~25 px finder patterns leave a ~10 px band where the signature fires, so halving the grid keeps ~5 crossings per finder per direction. Error correction operates on decoded module data, not on detection, and the fallback exists for decode failures — the safety case for detection is the crossing margin plus the corpus."
+    },
+    {
+      "q": "What is the entire code change in this PR?",
+      "o": [
+        "A new downsampled copy of each detection area",
+        "A rewrite of zedbar's line scanner to skip rows",
+        "One config call on the zedbar decoder: <code>.scan_density(2, 2)</code>",
+        "Dropping the second detection area"
+      ],
+      "a": 2,
+      "e": "The scanner already supported configurable scan density — the interpreter just never set it, so it defaulted to every row and column. <code>DecoderConfig::new().enable(config::QrCode).scan_density(2, 2)</code> is the whole diff (+7/−1, mostly the comment). The rqrr fallback is untouched."
+    },
+    {
+      "q": "Scanning does half the lines. Why did the measured time drop 41% instead of 50%?",
+      "o": [
+        "The remaining lines each take longer to scan",
+        "Only the line-scanning stage halves — clustering the flagged lines, decoding the located symbol, and per-image setup cost the same as before",
+        "Cache effects penalize the skipped rows",
+        "The 41% includes the rqrr fallback running more often"
+      ],
+      "a": 1,
+      "e": "Amdahl again, in miniature: the line sweep dominates but isn't everything. The fixed parts — setup, clustering, and the decode stage that runs once a candidate is found — are unchanged, so halving the sweep yields 41% overall (1.45 → 0.85 ms per area). The fallback runs exactly as often as before, since detections are identical."
+    },
+    {
+      "q": "Unlike the earlier PRs in this series, this change is not <em>provably</em> output-identical. What is the verification instead?",
+      "o": [
+        "A property test comparing density 1 and density 2 scans",
+        "The full corpus re-run: 2,550 images, 2,465 detections — identical successes <em>and</em> failures, identical payloads, identical orientations",
+        "Manual review of a sample of ballots",
+        "It's provable after all: skipped lines are redundant by construction"
+      ],
+      "a": 1,
+      "e": "Detection is heuristic, so there's no commutativity argument to make — a coarse enough grid <em>could</em> miss a marginal code. The evidence is exhaustive instead: every image in the corpus produces identical outcomes in both directions, including the pages that fail. That's also why the commit stops at density 2 rather than pushing the margin thinner."
+    },
+    {
+      "q": "The reported QR bounds can shift by up to 2 px under this change. Why doesn't that affect the decoded payload?",
+      "o": [
+        "The payload has error correction that absorbs the shift",
+        "Bounds are quantized to the scan grid, but decoding samples the code's modules from the located finder geometry — and the bounds themselves feed only debug images",
+        "The bounds are recomputed at full density after detection",
+        "2 px is smaller than one module, so nothing can change"
+      ],
+      "a": 1,
+      "e": "The corner estimates come from the sampled scan lines, so a coarser grid can land them a pixel or two away. But the decode stage builds its sampling grid from the located finder patterns and reads the modules from the image itself; in this codebase the reported bounds are consumed only by debug images. Payloads and orientations were byte-identical across the corpus."
+    }
+  ];
+  var quizEl = document.getElementById('quiz');
+  var scoreEl = document.getElementById('quizScore');
+  function render() {
+    quizEl.innerHTML = '';
+    var answered = 0, correct = 0;
+    function updateScore() {
+      scoreEl.textContent = answered + '/' + QUESTIONS.length + ' answered · ' + correct + ' correct on first try';
+    }
+    QUESTIONS.forEach(function (q, qi) {
+      var card = document.createElement('div');
+      card.className = 'quiz-q';
+      var text = document.createElement('p');
+      text.className = 'quiz-q-text';
+      text.innerHTML = (qi + 1) + '. ' + q.q;
+      card.appendChild(text);
+      var opts = document.createElement('div');
+      opts.className = 'quiz-opts';
+      var exp = document.createElement('div');
+      exp.className = 'quiz-exp';
+      var buttons = [];
+      q.o.forEach(function (opt, oi) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'quiz-opt';
+        b.innerHTML = opt;
+        b.addEventListener('click', function () {
+          if (card.classList.contains('answered')) return;
+          card.classList.add('answered');
+          buttons.forEach(function (x) { x.disabled = true; });
+          if (oi === q.a) {
+            b.classList.add('correct');
+            correct++;
+          } else {
+            b.classList.add('incorrect');
+            buttons[q.a].classList.add('correct');
+          }
+          answered++;
+          exp.innerHTML = q.e;
+          updateScore();
+        });
+        buttons.push(b);
+        opts.appendChild(b);
+      });
+      card.appendChild(opts);
+      card.appendChild(exp);
+      quizEl.appendChild(card);
+    });
+    updateScore();
+  }
+  document.getElementById('quizReset').addEventListener('click', render);
+  render();
+})();
+</script>
+</body>
+</html>
