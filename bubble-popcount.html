@@ -269,6 +269,19 @@
 </div>
 
 <div class="col">
+  <p>Notice what that predicate does <em>not</em> look at. A white template pixel counts whether the scan
+  under it is blank paper or a voter's graphite — the inside of the bubble, and the corners outside it, are
+  don't-care ground. That's the point: alignment has to be independent of fill, so that a marked bubble and
+  a blank one printed at the same spot are located identically.</p>
+  <p>It also means the white pixels hand every candidate the same fixed count — 700 of the production
+  template's 1,040 pixels — so scoring the template's <em>ink</em> instead isn't a different search:</p>
+  <pre><code>count(dark | white) = 700 + count(dark &amp; ink)</code></pre>
+  <p>Same ranking, same winner, same tie-breaks; only the printed number differs. The metric that really
+  would behave differently is plain agreement — rewarding light scan under white template too — and it
+  behaves worse: on a filled bubble it drags the placement off the mark and onto the clean margin, hunting
+  for the blank paper the template expects inside the outline. We've called that <strong>fleeing the
+  bubble</strong>.</p>
+
   <h2><span class="sec-num">02</span>A byte per pixel is 64× too wide</h2>
   <p>The old search evaluated that predicate pixel by pixel: for each of 196 placements, walk all 720
   template positions, load a byte of scan and a byte of template, compare, branch, count. But the predicate
